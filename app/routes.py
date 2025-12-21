@@ -8,6 +8,7 @@ import os
 import logging
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
+from werkzeug.utils import secure_filename
 
 logger = logging.getLogger(__name__)
 
@@ -63,47 +64,9 @@ def sign_in():
     return jsonify({"token": token, "user": user.to_dict()}), 200
 
 
-def _make_s3_client():
-    aws_key = os.getenv("AWS_ACCESS_KEY_ID")
-    aws_secret = os.getenv("AWS_SECRET_ACCESS_KEY")
-    aws_region = os.getenv("AWS_REGION")
-
-    kwargs = {}
-    if aws_key and aws_secret:
-        kwargs["aws_access_key_id"] = aws_key
-        kwargs["aws_secret_access_key"] = aws_secret
-    if aws_region:
-        kwargs["region_name"] = aws_region
-
-    return boto3.client("s3", **kwargs)
-
-
-@main.route("/presign", methods=["GET"])
-def presign():
-    key = request.args.get("key")
-    if not key:
-        return jsonify({"error": "Missing 'key' query parameter"}), 400
-    try:
-        expires = int(request.args.get("expires", 3600))
-    except ValueError:
-        expires = 3600
-
-    bucket = os.getenv("S3_BUCKET")
-    s3 = _make_s3_client()
-    try:
-        url = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=expires,
-        )
-        return jsonify({"url": url, "expires_in": expires})
-    except (BotoCoreError, ClientError) as e:
-        return jsonify({"error": "Failed to create presigned url"}), 500
-
-
-@main.route("/product/pdf")
-def get_product_pdf():
-    s3_key = "Icon Transp.png"
+@main.route("/product/<product_id>/image")
+def get_product_pdf(product_id):
+    s3_key = f"test{product_id}.png"
 
     bucket = os.getenv("S3_BUCKET")
     s3 = _make_s3_client()
@@ -117,3 +80,32 @@ def get_product_pdf():
     except (BotoCoreError, ClientError):
         return jsonify({"error": "Failed to generate presigned url"}), 500
 
+
+@main.route("/upload", methods=["POST"])
+def upload_file():
+    file = request.files['file']
+    filename = secure_filename(file.filename)
+    s3_key = filename
+    bucket = os.getenv('S3_BUCKET')
+    s3 = _make_s3_client()
+
+    extra_args = {}
+    if hasattr(file, 'mimetype') and file.mimetype:
+        extra_args['ContentType'] = file.mimetype
+
+    s3.upload_fileobj(file, bucket, s3_key, ExtraArgs=extra_args or None)
+
+    url = s3.generate_presigned_url(
+        'get_object',
+        Params={'Bucket': bucket, 'Key': s3_key},
+        ExpiresIn=3600,
+    )
+    return jsonify({'url': url}), 201
+
+def _make_s3_client():
+    kwargs = {}
+    kwargs["aws_access_key_id"] = os.getenv("AWS_ACCESS_KEY_ID")
+    kwargs["aws_secret_access_key"] = os.getenv("AWS_SECRET_ACCESS_KEY")
+    kwargs["region_name"] = os.getenv("AWS_REGION")
+
+    return boto3.client("s3", **kwargs)
