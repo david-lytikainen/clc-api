@@ -4,6 +4,7 @@ from flask_cors import CORS
 import os
 from datetime import timedelta
 from app.extensions import db, jwt
+from app.routes import main
 
 load_dotenv()
 
@@ -20,7 +21,7 @@ def create_app():
     db.init_app(app)
     jwt.init_app(app)
 
-    #TODO setup blueprints
+    app.register_blueprint(main, url_prefix="/api")
 
     CORS(
         app,
