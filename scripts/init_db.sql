@@ -23,3 +23,40 @@ CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id);
 CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token);
 
 insert into roles (name) values ('client'), ('admin');
+
+-- Product types
+CREATE TABLE IF NOT EXISTS product_types (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL
+);
+
+-- Products
+CREATE TABLE IF NOT EXISTS products (
+    id SERIAL PRIMARY KEY,
+    product_type_id INTEGER NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    description TEXT,
+    price NUMERIC(10,2) NOT NULL,
+    dimensions VARCHAR(100),
+    color VARCHAR(50),
+    note_of_cinnamon TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT fk_product_type FOREIGN KEY (product_type_id) REFERENCES product_types(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_products_product_type_id ON products(product_type_id);
+
+-- Product images
+CREATE TABLE IF NOT EXISTS product_images (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL,
+    s3_key VARCHAR(512) NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+
+    CONSTRAINT fk_product_image_product FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_images_product_id ON product_images(product_id);
+

@@ -2,7 +2,9 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token
 from datetime import timedelta
 from app.extensions import db
-from app.models import User
+from app.models import User, ProductType, Product, ProductImage
+from uuid import uuid4
+import pathlib
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
 import logging
@@ -64,43 +66,10 @@ def sign_in():
     return jsonify({"token": token, "user": user.to_dict()}), 200
 
 
-@main.route("/product/<product_id>/image")
-def get_product_pdf(product_id):
-    s3_key = f"test{product_id}.png"
-
-    bucket = os.getenv("S3_BUCKET")
-    s3 = _make_s3_client()
-    try:
-        url = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket, "Key": s3_key},
-            ExpiresIn=60,
-        )
-        return jsonify({"url": url, "expires_in": 60})
-    except (BotoCoreError, ClientError):
-        return jsonify({"error": "Failed to generate presigned url"}), 500
-
-
-@main.route("/upload", methods=["POST"])
-def upload_file():
-    file = request.files['file']
-    filename = secure_filename(file.filename)
-    s3_key = filename
-    bucket = os.getenv('S3_BUCKET')
-    s3 = _make_s3_client()
-
-    extra_args = {}
-    if hasattr(file, 'mimetype') and file.mimetype:
-        extra_args['ContentType'] = file.mimetype
-
-    s3.upload_fileobj(file, bucket, s3_key, ExtraArgs=extra_args or None)
-
-    url = s3.generate_presigned_url(
-        'get_object',
-        Params={'Bucket': bucket, 'Key': s3_key},
-        ExpiresIn=3600,
-    )
-    return jsonify({'url': url}), 201
+@main.route("/product-types", methods=["GET"])
+def get_product_types():
+    pts = ProductType.query.order_by(ProductType.name).all()
+    return jsonify([p.to_dict() for p in pts]), 200
 
 def _make_s3_client():
     kwargs = {}
@@ -109,3 +78,93 @@ def _make_s3_client():
     kwargs["region_name"] = os.getenv("AWS_REGION")
 
     return boto3.client("s3", **kwargs)
+
+
+def _presign_key(key: str, expires: int = 3600) -> str:
+    try:
+        bucket = os.getenv('S3_BUCKET')
+        if not bucket or not key:
+            return None
+        s3 = _make_s3_client()
+        return s3.generate_presigned_url(
+            'get_object', Params={'Bucket': bucket, 'Key': key}, ExpiresIn=expires
+        )
+    except Exception:
+        logger.exception('Failed to presign s3 key %s', key)
+        return ''
+
+@main.route('/products/create', methods=['POST'])
+def create_product():
+    form = request.form
+    required = ['title', 'price', 'description', 'product_type_id', 'dimensions', 'color', 'note_of_cinnamon']
+    missing = [f for f in required if not form.get(f)]
+    if missing:
+        return jsonify({'error': 'Missing fields', 'missing': missing}), 400
+
+    try:
+        product = Product(
+            product_type_id=int(form.get('product_type_id')),
+            title=form.get('title'),
+            description=form.get('description'),
+            price=form.get('price'),
+            dimensions=form.get('dimensions'),
+            color=form.get('color'),
+            note_of_cinnamon=form.get('note_of_cinnamon'),
+        )
+        db.session.add(product)
+        db.session.flush()  # assigns product.id
+
+        s3 = _make_s3_client()
+        bucket = os.getenv('S3_BUCKET')
+        uploaded_keys = []
+
+        files = request.files.getlist('images')
+        for idx, f in enumerate(files):
+            if not f:
+                continue
+            filename = secure_filename(f.filename or '')
+            ext = pathlib.Path(filename).suffix or ''
+            key = f"products/{product.id}/{uuid4().hex}{ext}"
+
+            extra_args = {}
+            if hasattr(f, 'mimetype') and f.mimetype:
+                extra_args['ContentType'] = f.mimetype
+
+            s3.upload_fileobj(f, bucket, key, ExtraArgs=extra_args or None)
+            uploaded_keys.append(key)
+
+            pi = ProductImage(product_id=product.id, s3_key=key, sort_order=idx)
+            db.session.add(pi)
+        db.session.commit()
+        first_image = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).first()
+        result = product.to_dict()
+        if first_image:
+            result['image_url'] = _presign_key(first_image.s3_key)
+
+        return jsonify(result), 201
+
+    except Exception as e:
+        logger.exception('Failed to create product')
+        db.session.rollback()
+        try:
+            s3 = _make_s3_client()
+            bucket = os.getenv('S3_BUCKET')
+            for key in uploaded_keys:
+                try:
+                    s3.delete_object(Bucket=bucket, Key=key)
+                except Exception:
+                    logger.exception('Failed to delete orphaned S3 key %s', key)
+        except Exception:
+            logger.exception('Failed during S3 cleanup')
+        return jsonify({'error': 'Failed to create product'}), 500
+
+@main.route('/products', methods=['GET'])
+def get_products():
+    products = Product.query.where(Product.is_active == True).order_by(Product.created_at.desc()).all()
+    out = []
+    for p in products:
+        pd = p.to_dict()
+        first_image = ProductImage.query.filter_by(product_id=p.id).order_by(ProductImage.sort_order).first()
+        pd['image_url'] = _presign_key(first_image.s3_key) if first_image else None
+        out.append(pd)
+    return jsonify(out), 200
