@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import create_access_token
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from datetime import timedelta
 from app.extensions import db
 from app.models import User, ProductType, Product, ProductImage
@@ -65,6 +65,21 @@ def sign_in():
     token = create_access_token(identity=str(user.id), expires_delta=timedelta(days=1))
     return jsonify({"token": token, "user": user.to_dict()}), 200
 
+@main.route('/me', methods=['GET'])
+@jwt_required()
+def me():
+    identity = get_jwt_identity()
+    try:
+        user_id = int(identity)
+    except Exception:
+        return jsonify({'error': 'Invalid token identity'}), 401
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    return jsonify(user.to_dict()), 200
+
 
 @main.route("/product-types", methods=["GET"])
 def get_product_types():
@@ -78,7 +93,6 @@ def _make_s3_client():
     kwargs["region_name"] = os.getenv("AWS_REGION")
 
     return boto3.client("s3", **kwargs)
-
 
 def _presign_key(key: str, expires: int = 3600) -> str:
     try:
