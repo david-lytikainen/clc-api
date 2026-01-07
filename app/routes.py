@@ -172,9 +172,12 @@ def create_product():
             logger.exception('Failed during S3 cleanup')
         return jsonify({'error': 'Failed to create product'}), 500
 
-@main.route('/products', methods=['GET'])
-def get_products():
-    products = Product.query.where(Product.is_active == True).order_by(Product.created_at.desc()).all()
+@main.route('/products/<product_type>', methods=['GET'])
+def get_products(product_type):
+    if product_type == 'all':
+        products = Product.query.where(Product.is_active == True).order_by(Product.created_at.desc()).all()
+    else:
+        products = (Product.query.join(ProductType).where(ProductType.name == product_type, Product.is_active == True).order_by(Product.created_at.desc()).all())
     out = []
     for p in products:
         pd = p.to_dict()
