@@ -55,7 +55,6 @@ class Product(db.Model):
     price = db.Column(db.Numeric(10, 2), nullable=False)
     dimensions = db.Column(db.String(100), nullable=True)
     color = db.Column(db.String(50), nullable=True)
-    note_of_cinnamon = db.Column(db.Text, nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, server_default=db.text('true'))
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=db.func.now())
 
@@ -70,7 +69,6 @@ class Product(db.Model):
             "price": float(self.price) if self.price is not None else None,
             "dimensions": self.dimensions,
             "color": self.color,
-            "note_of_cinnamon": self.note_of_cinnamon,
             "is_active": bool(self.is_active),
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

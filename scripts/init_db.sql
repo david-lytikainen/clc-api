@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS products (
     price NUMERIC(10,2) NOT NULL,
     dimensions VARCHAR(100),
     color VARCHAR(50),
-    note_of_cinnamon TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 

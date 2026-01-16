@@ -80,7 +80,7 @@ def me():
 
     return jsonify(user.to_dict()), 200
 
-
+# PRODUCTS
 @main.route("/product-types", methods=["GET"])
 def get_product_types():
     pts = ProductType.query.order_by(ProductType.name).all()
@@ -110,7 +110,7 @@ def _presign_key(key: str, expires: int = 3600) -> str:
 @main.route('/products/create', methods=['POST'])
 def create_product():
     form = request.form
-    required = ['title', 'price', 'description', 'product_type_id', 'dimensions', 'color', 'note_of_cinnamon']
+    required = ['title', 'price', 'description', 'product_type_id', 'dimensions', 'color']
     missing = [f for f in required if not form.get(f)]
     if missing:
         return jsonify({'error': 'Missing fields', 'missing': missing}), 400
@@ -123,7 +123,6 @@ def create_product():
             price=form.get('price'),
             dimensions=form.get('dimensions'),
             color=form.get('color'),
-            note_of_cinnamon=form.get('note_of_cinnamon'),
         )
         db.session.add(product)
         db.session.flush()  # assigns product.id
@@ -185,3 +184,11 @@ def get_products(product_type):
         pd['image_url'] = _presign_key(first_image.s3_key) if first_image else None
         out.append(pd)
     return jsonify(out), 200
+
+@main.route('/product/<int:product_id>', methods=['GET'])
+def get_product(product_id):
+    product = Product.query.get_or_404(product_id)
+    pd = product.to_dict()
+    all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
+    pd['image_urls'] = [_presign_key(img.s3_key) for img in all_images]
+    return jsonify(pd), 200
