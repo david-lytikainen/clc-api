@@ -1,15 +1,15 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
-from datetime import timedelta
+from datetime import timedelta, datetime
 from app.extensions import db
-from app.models import User, ProductType, Product, ProductImage
+from app.models import User, ProductType, Product, ProductImage, Order
 from uuid import uuid4
 import pathlib
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
 import logging
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
+import stripe
 from werkzeug.utils import secure_filename
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,18 @@ def create_product():
         db.session.add(product)
         db.session.flush()  # assigns product.id
 
+        # create Stripe Product and Price and persist the price id
+        stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
+        try:
+            unit_amount = int(float(product.price) * 100)
+            stripe_prod = stripe.Product.create(name=product.title, description=product.description or '')
+            stripe_price = stripe.Price.create(product=stripe_prod.id, unit_amount=unit_amount, currency='usd')
+            product.stripe_price_id = stripe_price.id
+            db.session.add(product)
+        except Exception:
+            logger.exception('Failed to create stripe product/price')
+            raise
+
         s3 = _make_s3_client()
         bucket = os.getenv('S3_BUCKET')
         uploaded_keys = []
@@ -192,3 +204,175 @@ def get_product(product_id):
     all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
     pd['image_urls'] = [_presign_key(img.s3_key) for img in all_images]
     return jsonify(pd), 200
+
+@main.route("/test-email", methods=["POST"])
+def test_email():
+    
+    ses = boto3.client(
+        "ses",
+        region_name=os.getenv("AWS_REGION"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
+    )
+    response = ses.send_email(
+        Source="orders@cinnamonleatherco.com",
+        Destination={"ToAddresses": ["david.lytikainen@gmail.com", "kate.lytikainen@gmail.com"]},
+        Message={
+            "Subject": {"Data": "Cinnamon Leather Co Test Email"},
+            "Body": {"Text": {"Data": "This is a test email from Cinnamon Leather Co."}}
+        }
+    )
+    return {"message_id": response["MessageId"]}
+
+@main.route('/create-checkout-session/<price_id>', methods=['POST'])
+@jwt_required(optional=True)
+def create_checkout_session(price_id):
+    data = request.get_json() or {}
+    try:
+        quantity = int(data.get('quantity', 1))
+    except Exception:
+        return jsonify({'error': 'Invalid quantity'}), 400
+
+    stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
+
+    line_items = [{'price': price_id, 'quantity': quantity}]
+
+    # attach authenticated user if available so webhook can assign Order.user_id
+    try:
+        user_identity = get_jwt_identity()
+        try:
+            user_id = int(user_identity) if user_identity is not None else None
+        except Exception:
+            user_id = None
+    except Exception:
+        user_id = None
+
+    try:
+        # attach price_id to success_url so frontend can know which price was used
+        success_base = os.getenv('STRIPE_SUCCESS_URL')
+        sep = '&' if '?' in success_base else '?'
+        success_url = f"{success_base}{sep}price_id={price_id}"
+        product_id = Product.query.filter_by(stripe_price_id=price_id).first().id
+        cancel_url = os.getenv('STRIPE_CANCEL_URL') + str(product_id)
+
+        session_kwargs = dict(
+            payment_method_types=['card'],
+            mode='payment',
+            line_items=line_items,
+            success_url=success_url,
+            cancel_url=cancel_url,
+        )
+        if user_id:
+            # metadata and client_reference_id are server-set and safe
+            session_kwargs['client_reference_id'] = str(user_id)
+            session_kwargs['metadata'] = {'user_id': str(user_id)}
+
+        session = stripe.checkout.Session.create(**session_kwargs)
+        return jsonify({'id': session.id, 'url': session.url, 'price_id': price_id}), 200
+    except Exception:
+        logger.exception('Stripe checkout session creation failed')
+        return jsonify({'error': 'Failed to create checkout session'}), 500
+
+@main.route('/webhook', methods=['POST'])
+def stripe_webhook():
+    payload = request.get_data(as_text=True)
+    sig_header = request.headers.get('Stripe-Signature')
+    webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET')
+
+    if webhook_secret:
+        try:
+            event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+        except ValueError:
+            logger.exception('Invalid payload')
+            return '', 400
+        except stripe.error.SignatureVerificationError:
+            logger.exception('Invalid signature')
+            return '', 400
+
+    event_type = event.get('type')
+    logger.info('Received Stripe event: %s', event_type)
+
+    if event_type == 'checkout.session.completed':
+        session = event['data']['object']
+        logger.info('Checkout session completed: %s', session.get('id'))
+        try:
+            stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
+            session_obj = stripe.checkout.Session.retrieve(
+                session.get('id'), expand=['line_items', 'payment_intent', 'customer_details']
+            )
+        except Exception:
+            logger.exception('Failed to retrieve full session from Stripe')
+            return '', 200
+
+        try:
+            existing = Order.query.filter_by(session_id=session_obj.id).first()
+            if existing:
+                logger.info('Order already exists for session %s (order id=%s)', session_obj.id, existing.id)
+            else:
+                line_items = getattr(session_obj, 'line_items', {}).get('data', []) if getattr(session_obj, 'line_items', None) else session_obj.get('line_items', {}).get('data', [])
+                if line_items:
+                    item = line_items[0]
+                    price_obj = item.get('price') if isinstance(item, dict) else None
+                    stripe_price_id = price_obj.get('id') if isinstance(price_obj, dict) else (item.get('price') if isinstance(item, dict) else None)
+                    quantity = int(item.get('quantity', 1)) if isinstance(item, dict) else 1
+                else:
+                    stripe_price_id = None
+                    quantity = 1
+
+                product = Product.query.filter_by(stripe_price_id=stripe_price_id).first() if stripe_price_id else None
+                product_id = product.id if product else None
+
+                amount_cents = int(getattr(session_obj, 'amount_total', None) or session_obj.get('amount_total') or 0)
+                payment_intent = getattr(session_obj, 'payment_intent', None) or session_obj.get('payment_intent')
+                payment_intent_id = payment_intent.id
+                customer_email = None
+                if getattr(session_obj, 'customer_details', None):
+                    try:
+                        customer_email = session_obj.customer_details.email
+                    except Exception:
+                        customer_email = session_obj.get('customer_details', {}).get('email')
+
+                # try to attach user from session metadata or client_reference_id
+                try:
+                    user_id_val = None
+                    # metadata may be an object on expanded session or a dict
+                    if getattr(session_obj, 'metadata', None):
+                        try:
+                            user_id_val = session_obj.metadata.get('user_id')
+                        except Exception:
+                            user_id_val = session_obj.get('metadata', {}).get('user_id')
+                    if not user_id_val and getattr(session_obj, 'client_reference_id', None):
+                        user_id_val = session_obj.client_reference_id
+                    if user_id_val is not None:
+                        try:
+                            user_id_val = int(user_id_val)
+                        except Exception:
+                            # leave as None if it can't be parsed
+                            user_id_val = None
+                except Exception:
+                    user_id_val = None
+
+                order = Order(
+                    user_id=user_id_val,
+                    product_id=product_id,
+                    session_id=session_obj.id,
+                    payment_intent_id=payment_intent_id,
+                    stripe_price_id=stripe_price_id,
+                    quantity=quantity,
+                    amount_cents=amount_cents,
+                    status='paid' if getattr(session_obj, 'payment_status', None) == 'paid' else 'pending',
+                    customer_email=customer_email,
+                    paid_at=(datetime.utcnow() if getattr(session_obj, 'payment_status', None) == 'paid' else None)
+                )
+                db.session.add(order)
+                db.session.commit()
+                logger.info('Created order id=%s for session %s', order.id, session_obj.id)
+        except Exception:
+            logger.exception('Error creating order for session %s', session.get('id'))
+            try:
+                db.session.rollback()
+            except Exception:
+                logger.exception('Rollback failed')
+
+    return '', 200
+    

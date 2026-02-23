@@ -55,6 +55,7 @@ class Product(db.Model):
     price = db.Column(db.Numeric(10, 2), nullable=False)
     dimensions = db.Column(db.String(100), nullable=True)
     color = db.Column(db.String(50), nullable=True)
+    stripe_price_id = db.Column(db.String(255), nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, server_default=db.text('true'))
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=db.func.now())
 
@@ -67,6 +68,7 @@ class Product(db.Model):
             "title": self.title,
             "description": self.description,
             "price": float(self.price) if self.price is not None else None,
+            "stripe_price_id": self.stripe_price_id,
             "dimensions": self.dimensions,
             "color": self.color,
             "is_active": bool(self.is_active),
@@ -91,3 +93,19 @@ class ProductImage(db.Model):
             "s3_key": self.s3_key,
             "sort_order": self.sort_order,
         }
+
+class Order(db.Model):
+    __tablename__ = 'orders'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=False)
+    session_id = db.Column(db.String(255), unique=True, nullable=False)
+    payment_intent_id = db.Column(db.String(255))
+    stripe_price_id = db.Column(db.String(255))
+    quantity = db.Column(db.Integer)
+    amount_cents = db.Column(db.Integer)
+    status = db.Column(db.String(20))
+    customer_email = db.Column(db.String(255))
+    created_at = db.Column(db.TIMESTAMP(timezone=True), server_default=db.func.now())
+    paid_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
+    

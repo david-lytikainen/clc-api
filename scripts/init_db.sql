@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS products (
     product_type_id INTEGER NOT NULL,
     title VARCHAR(200) NOT NULL,
     description TEXT,
+    stripe_price_id VARCHAR(255),
     price NUMERIC(10,2) NOT NULL,
     dimensions VARCHAR(100),
     color VARCHAR(50),
@@ -46,6 +47,29 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 CREATE INDEX IF NOT EXISTS idx_products_product_type_id ON products(product_type_id);
+
+-- Orders
+CREATE TABLE IF NOT EXISTS orders (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER,
+    product_id INTEGER NOT NULL,
+    session_id VARCHAR(255) UNIQUE NOT NULL,
+    payment_intent_id VARCHAR(255),
+    stripe_price_id VARCHAR(255),
+    quantity INTEGER,
+    amount_cents INTEGER,
+    status VARCHAR(20),
+    customer_email VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    paid_at TIMESTAMP WITH TIME ZONE,
+
+    CONSTRAINT fk_order_user FOREIGN KEY (user_id) REFERENCES users(id),
+    CONSTRAINT fk_order_product FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id);
+CREATE INDEX IF NOT EXISTS idx_orders_session_id ON orders(session_id);
 
 -- Product images
 CREATE TABLE IF NOT EXISTS product_images (

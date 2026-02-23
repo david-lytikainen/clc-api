@@ -7,3 +7,4 @@ SQLAlchemy==2.0.16
 psycopg2-binary==2.9.9
 Werkzeug==2.2.3
 boto3==1.26.152
+stripe==14.2.0
