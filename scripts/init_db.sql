@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS orders (
     id SERIAL PRIMARY KEY,
     user_id INTEGER,
     product_id INTEGER NOT NULL,
-    session_id VARCHAR(255) UNIQUE NOT NULL,
+    session_id VARCHAR(255) NOT NULL,
+    order_number VARCHAR(6),
     payment_intent_id VARCHAR(255),
     stripe_price_id VARCHAR(255),
     quantity INTEGER,
@@ -62,6 +63,8 @@ CREATE TABLE IF NOT EXISTS orders (
     customer_email VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     paid_at TIMESTAMP WITH TIME ZONE,
+    tracking_url VARCHAR(512),
+    comments TEXT,
 
     CONSTRAINT fk_order_user FOREIGN KEY (user_id) REFERENCES users(id),
     CONSTRAINT fk_order_product FOREIGN KEY (product_id) REFERENCES products(id)
@@ -70,6 +73,7 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id);
 CREATE INDEX IF NOT EXISTS idx_orders_session_id ON orders(session_id);
+CREATE INDEX IF NOT EXISTS idx_orders_order_number ON orders(order_number);
 
 -- Product images
 CREATE TABLE IF NOT EXISTS product_images (

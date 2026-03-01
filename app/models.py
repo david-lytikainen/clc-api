@@ -1,4 +1,5 @@
 from app.extensions import db
+import json
 
 
 class User(db.Model):
@@ -22,6 +23,7 @@ class User(db.Model):
             "email": self.email,
             "first_name": self.first_name,
             "last_name": self.last_name,
+            "phone": self.phone,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -99,7 +101,8 @@ class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=False)
-    session_id = db.Column(db.String(255), unique=True, nullable=False)
+    session_id = db.Column(db.String(255), nullable=False, index=True)
+    order_number = db.Column(db.String(6), nullable=True, index=True)
     payment_intent_id = db.Column(db.String(255))
     stripe_price_id = db.Column(db.String(255))
     quantity = db.Column(db.Integer)
@@ -108,8 +111,21 @@ class Order(db.Model):
     customer_email = db.Column(db.String(255))
     created_at = db.Column(db.TIMESTAMP(timezone=True), server_default=db.func.now())
     paid_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
+    tracking_url = db.Column(db.String(512), nullable=True)
+    comments = db.Column(db.Text, nullable=True)
 
     product = db.relationship('Product', backref=db.backref('orders', lazy='joined'), lazy='joined')
+
+    def _comments_as_list(self):
+        if not self.comments or not self.comments.strip():
+            return []
+        try:
+            parsed = json.loads(self.comments)
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed]
+            return [str(self.comments)]
+        except (ValueError, TypeError):
+            return [self.comments] if self.comments else []
 
     def to_dict(self):
         return {
@@ -117,6 +133,7 @@ class Order(db.Model):
             "user_id": self.user_id,
             "product_id": self.product_id,
             "session_id": self.session_id,
+            "order_number": self.order_number,
             "payment_intent_id": self.payment_intent_id,
             "stripe_price_id": self.stripe_price_id,
             "quantity": self.quantity,
@@ -125,6 +142,8 @@ class Order(db.Model):
             "customer_email": self.customer_email,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "paid_at": self.paid_at.isoformat() if self.paid_at else None,
+            "tracking_url": self.tracking_url,
+            "comments": self._comments_as_list(),
         }
     
 
