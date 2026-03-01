@@ -108,4 +108,40 @@ class Order(db.Model):
     customer_email = db.Column(db.String(255))
     created_at = db.Column(db.TIMESTAMP(timezone=True), server_default=db.func.now())
     paid_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
+
+    product = db.relationship('Product', backref=db.backref('orders', lazy='joined'), lazy='joined')
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "product_id": self.product_id,
+            "session_id": self.session_id,
+            "payment_intent_id": self.payment_intent_id,
+            "stripe_price_id": self.stripe_price_id,
+            "quantity": self.quantity,
+            "amount_cents": self.amount_cents,
+            "status": self.status,
+            "customer_email": self.customer_email,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "paid_at": self.paid_at.isoformat() if self.paid_at else None,
+        }
     
+
+class Cart(db.Model):
+    __tablename__ = 'carts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    guest_token = db.Column(db.String(255), nullable=True)
+    items = db.Column(db.JSON, nullable=False)
+    updated_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=db.func.now())
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'guest_token': self.guest_token,
+            'items': self.items,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }

@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from datetime import timedelta, datetime
 from app.extensions import db
-from app.models import User, ProductType, Product, ProductImage, Order
+from app.models import User, ProductType, Product, ProductImage, Order, Cart
 from uuid import uuid4
 import pathlib
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -360,7 +360,7 @@ def stripe_webhook():
                     stripe_price_id=stripe_price_id,
                     quantity=quantity,
                     amount_cents=amount_cents,
-                    status='paid' if getattr(session_obj, 'payment_status', None) == 'paid' else 'pending',
+                    status='Ordered',
                     customer_email=customer_email,
                     paid_at=(datetime.utcnow() if getattr(session_obj, 'payment_status', None) == 'paid' else None)
                 )
@@ -375,4 +375,72 @@ def stripe_webhook():
                 logger.exception('Rollback failed')
 
     return '', 200
-    
+
+@main.route('/orders', methods=['GET'])
+@jwt_required()
+def get_orders():
+    identity = get_jwt_identity()
+    try:
+        user_id = int(identity)
+    except Exception:
+        return jsonify({'error': 'Invalid token identity'}), 401
+
+    orders = Order.query.filter_by(user_id=user_id).order_by(Order.created_at.desc()).all()
+
+    out = []
+    for o in orders:
+        od = o.to_dict()
+        if o.product:
+            od['product_title'] = o.product.title
+            img = (
+                ProductImage.query
+                .filter_by(product_id=o.product.id)
+                .order_by(ProductImage.sort_order)
+                .first()
+            )
+            if img:
+                od['image_url'] = _presign_key(img.s3_key)
+            else:
+                od['image_url'] = None
+        else:
+            od['product_title'] = None
+            od['image_url'] = None
+        out.append(od)
+
+    return jsonify(out), 200
+
+@main.route('/sync-cart', methods=['POST'])
+@jwt_required()
+def sync_cart():
+    identity = get_jwt_identity()
+    try:
+        user_id = int(identity)
+    except Exception:
+        return jsonify({'error': 'Invalid token identity'}), 401
+
+    data = request.get_json() or {}
+    items = data.get('items')
+    if not isinstance(items, list):
+        return jsonify({'error': 'items must be a list'}), 400
+
+    cart = Cart.query.filter_by(user_id=user_id).first()
+    if not cart:
+        cart = Cart(user_id=user_id, items=items)
+        db.session.add(cart)
+    else:
+        cart.items = items
+        cart.updated_at = db.func.now()
+    db.session.commit()
+    return jsonify(cart.to_dict()), 200
+
+@main.route('/cart', methods=['GET'])
+@jwt_required()
+def get_cart():
+    identity = get_jwt_identity()
+    try:
+        user_id = int(identity)
+    except Exception:
+        return jsonify({'error': 'Invalid token identity'}), 401
+    cart = Cart.query.filter_by(user_id=user_id).first()
+    return jsonify(cart.to_dict() if cart else {'items': []}), 200
+
