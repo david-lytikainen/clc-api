@@ -164,3 +164,21 @@ class Cart(db.Model):
             'items': self.items,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
+
+class Banner(db.Model):
+    __tablename__ = 'banners'
+
+    id = db.Column(db.Integer, primary_key=True)
+    is_active = db.Column(db.Boolean, nullable=False, server_default=db.text('false'))
+    text = db.Column(db.String(500), nullable=False, server_default=db.text("''"))
+    background_color = db.Column(db.String(50), nullable=False, server_default=db.text("'primary'"))
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=db.func.now())
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'is_active': self.is_active,
+            'text': self.text,
+            'background_color': self.background_color,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }

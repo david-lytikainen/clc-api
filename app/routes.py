@@ -3,7 +3,7 @@ from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identi
 from datetime import timedelta, datetime
 import json
 from app.extensions import db
-from app.models import User, ProductType, Product, ProductImage, Order, Cart
+from app.models import User, ProductType, Product, ProductImage, Order, Cart, Banner
 from uuid import uuid4
 import pathlib
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -612,6 +612,34 @@ def admin_update_order(order_number):
     db.session.commit()
     out = [_order_to_dict_with_product(o) for o in orders]
     return jsonify({'order_number': order_number, 'orders': out}), 200
+
+BANNER_COLORS = ('primary', 'primary_dark', 'secondary', 'secondary_dark')
+
+@main.route('/banner', methods=['GET'])
+def get_banner():
+    """Public: return the most recent banner only if it is active, else null."""
+    banner = Banner.query.order_by(Banner.created_at.desc()).first()
+    if not banner or not banner.is_active:
+        return jsonify({'banner': None}), 200
+    return jsonify({'banner': banner.to_dict()}), 200
+
+@main.route('/admin/banner', methods=['POST'])
+@jwt_required()
+def admin_create_banner():
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    data = request.get_json() or {}
+    is_active = bool(data.get('is_active', True))
+    text = (data.get('text') or '').strip()[:500]
+    background_color = (data.get('background_color') or 'primary').strip()
+    if background_color not in BANNER_COLORS:
+        background_color = 'primary'
+    for b in Banner.query.all():
+        b.is_active = False
+    banner = Banner(is_active=is_active, text=text, background_color=background_color)
+    db.session.add(banner)
+    db.session.commit()
+    return jsonify(banner.to_dict()), 201
 
 @main.route('/sync-cart', methods=['POST'])
 @jwt_required()
