@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from datetime import timedelta, datetime
 import json
+from sqlalchemy.orm import joinedload
 from app.extensions import db
 from app.models import User, ProductType, Product, ProductImage, Order, Cart, Banner
 from uuid import uuid4
@@ -203,15 +204,18 @@ def create_product():
             logger.exception('Failed during S3 cleanup')
         return jsonify({'error': 'Failed to create product'}), 500
 
-@main.route('/products/<product_type>', methods=['GET'])
-def get_products(product_type):
-    if product_type == 'all':
-        products = Product.query.where(Product.is_active == True).order_by(Product.created_at.desc()).all()
-    else:
-        products = (Product.query.join(ProductType).where(ProductType.name == product_type, Product.is_active == True).order_by(Product.created_at.desc()).all())
+@main.route('/products', methods=['GET'])
+def get_products():
+    products = (
+        Product.query.options(joinedload(Product.product_type))
+        .where(Product.is_active == True)
+        .order_by(Product.created_at.desc())
+        .all()
+    )
     out = []
     for p in products:
         pd = p.to_dict()
+        pd['product_type_name'] = p.product_type.name if p.product_type else None
         first_image = ProductImage.query.filter_by(product_id=p.id).order_by(ProductImage.sort_order).first()
         pd['image_url'] = _presign_key(first_image.s3_key) if first_image else None
         out.append(pd)
@@ -545,6 +549,12 @@ def _order_to_dict_with_product(o):
     else:
         od['product_title'] = None
         od['image_url'] = None
+    if o.user_id:
+        u = User.query.get(o.user_id)
+        if u:
+            od['user_first_name'] = u.first_name
+            od['user_last_name'] = u.last_name
+            od['user_email'] = u.email
     return od
 
 @main.route('/admin/orders', methods=['GET'])
