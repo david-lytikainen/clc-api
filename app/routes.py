@@ -1,10 +1,11 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 import json
 from sqlalchemy.orm import joinedload
 from app.extensions import db
 from app.models import User, ProductType, Product, ProductImage, Order, Cart, Banner
+from app.utils.email import send_password_reset_code_email
 from uuid import uuid4
 import pathlib
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -86,6 +87,62 @@ def sign_in():
     token = create_access_token(identity=str(user.id), expires_delta=timedelta(days=1))
     return jsonify({"token": token, "user": user.to_dict()}), 200
 
+
+@main.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "No account associated with this email"}), 404
+    code = "".join(str(random.randint(0, 9)) for _ in range(6))
+    user.forgot_password_code = code
+    user.forgot_password_code_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+    db.session.commit()
+    send_password_reset_code_email(user, code)
+    return jsonify({"message": "Code sent"}), 200
+
+
+@main.route("/verify-reset-code", methods=["POST"])
+def verify_reset_code():
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    code = (data.get("code") or "").strip()
+    if not email or not code:
+        return jsonify({"error": "Email and code are required"}), 400
+    user = User.query.filter_by(email=email).first()
+    if not user or user.forgot_password_code != code or not user.forgot_password_code_expires_at:
+        return jsonify({"error": "Invalid code"}), 400
+    if user.forgot_password_code_expires_at < datetime.now(timezone.utc):
+        return jsonify({"error": "Invalid code"}), 400
+    return jsonify({"valid": True}), 200
+
+
+@main.route("/reset-password", methods=["POST"])
+def reset_password():
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    code = (data.get("code") or "").strip()
+    new_password = data.get("new_password")
+    if not email or not code:
+        return jsonify({"error": "Email and code are required"}), 400
+    if not new_password or len(new_password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+    user = User.query.filter_by(email=email).first()
+    if not user or user.forgot_password_code != code or not user.forgot_password_code_expires_at:
+        return jsonify({"error": "Invalid code"}), 400
+    if user.forgot_password_code_expires_at < datetime.now(timezone.utc):
+        return jsonify({"error": "Code has expired"}), 400
+    user.password = generate_password_hash(new_password)
+    user.forgot_password_code = None
+    user.forgot_password_code_expires_at = None
+    db.session.commit()
+    token = create_access_token(identity=str(user.id), expires_delta=timedelta(days=1))
+    return jsonify({"token": token, "user": user.to_dict()}), 200
+
+
 @main.route('/me', methods=['GET'])
 @jwt_required()
 def me():
@@ -100,6 +157,26 @@ def me():
         return jsonify({'error': 'User not found'}), 404
 
     return jsonify(user.to_dict()), 200
+
+
+@main.route('/me', methods=['PATCH'])
+@jwt_required()
+def update_me():
+    identity = get_jwt_identity()
+    try:
+        user_id = int(identity)
+    except Exception:
+        return jsonify({'error': 'Invalid token identity'}), 401
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    data = request.get_json() or {}
+    if 'allergic_to_cinnamon' in data:
+        val = data['allergic_to_cinnamon']
+        user.allergic_to_cinnamon = bool(val) if val is not None else None
+    db.session.commit()
+    return jsonify(user.to_dict()), 200
+
 
 # PRODUCTS
 @main.route("/product-types", methods=["GET"])
@@ -376,13 +453,17 @@ def create_cart_checkout_session():
         order_number = _generate_order_number()
         success_url = f"{success_base}/orders/{order_number}"
         cancel_url = os.getenv('STRIPE_CANCEL_CART_URL').rstrip('/')
+        allergic = data.get('allergic_to_cinnamon')
+        meta = {'order_number': order_number, 'user_id': str(user_id) if user_id else ''}
+        if allergic is not None:
+            meta['allergic_to_cinnamon'] = 'true' if allergic else 'false'
         session_kwargs = dict(
             payment_method_types=['card'],
             mode='payment',
             line_items=line_items,
             success_url=success_url,
             cancel_url=cancel_url,
-            metadata={'order_number': order_number, 'user_id': str(user_id) if user_id else ''},
+            metadata=meta,
         )
         if user_id:
             session_kwargs['client_reference_id'] = str(user_id)
@@ -421,14 +502,17 @@ def create_checkout_session(price_id):
         success_url = f"{success_base}/orders/{order_number}"
         product_id = Product.query.filter_by(stripe_price_id=price_id).first().id
         cancel_url = os.getenv('STRIPE_CANCEL_URL') + str(product_id)
-
+        allergic = data.get('allergic_to_cinnamon')
+        meta = {'order_number': order_number, 'user_id': str(user_id) if user_id else ''}
+        if allergic is not None:
+            meta['allergic_to_cinnamon'] = 'true' if allergic else 'false'
         session_kwargs = dict(
             payment_method_types=['card'],
             mode='payment',
             line_items=line_items,
             success_url=success_url,
             cancel_url=cancel_url,
-            metadata={'order_number': order_number, 'user_id': str(user_id) if user_id else ''},
+            metadata=meta,
         )
         if user_id:
             session_kwargs['client_reference_id'] = str(user_id)
@@ -493,14 +577,18 @@ def stripe_webhook():
                 try:
                     user_id_val = None
                     order_number = None
+                    allergic_to_cinnamon_meta = None
                     if getattr(session_obj, 'metadata', None):
                         try:
                             meta = session_obj.metadata
                             user_id_val = meta.get('user_id') if hasattr(meta, 'get') else getattr(meta, 'user_id', None)
                             order_number = meta.get('order_number') if hasattr(meta, 'get') else getattr(meta, 'order_number', None)
+                            ac = meta.get('allergic_to_cinnamon') if hasattr(meta, 'get') else getattr(meta, 'allergic_to_cinnamon', None)
+                            allergic_to_cinnamon_meta = ac
                         except Exception:
                             user_id_val = session_obj.get('metadata', {}).get('user_id')
                             order_number = session_obj.get('metadata', {}).get('order_number')
+                            allergic_to_cinnamon_meta = session_obj.get('metadata', {}).get('allergic_to_cinnamon')
                     if not user_id_val and getattr(session_obj, 'client_reference_id', None):
                         user_id_val = session_obj.client_reference_id
                     if user_id_val is not None:
@@ -510,9 +598,14 @@ def stripe_webhook():
                             user_id_val = None
                     if not order_number:
                         order_number = _generate_order_number()
+                    try:
+                        allergic_to_cinnamon_order = allergic_to_cinnamon_meta == 'true' if allergic_to_cinnamon_meta else None
+                    except Exception:
+                        allergic_to_cinnamon_order = None
                 except Exception:
                     user_id_val = None
                     order_number = _generate_order_number()
+                    allergic_to_cinnamon_order = None
 
                 for item in (line_items_list or [{}]):
                     price_obj = item.get('price') if isinstance(item, dict) else getattr(item, 'price', None)
@@ -539,7 +632,8 @@ def stripe_webhook():
                         amount_cents=amount_cents,
                         status='Ordered',
                         customer_email=customer_email,
-                        paid_at=(datetime.utcnow() if getattr(session_obj, 'payment_status', None) == 'paid' else None)
+                        paid_at=(datetime.utcnow() if getattr(session_obj, 'payment_status', None) == 'paid' else None),
+                        allergic_to_cinnamon=allergic_to_cinnamon_order,
                     )
                     db.session.add(order)
                 db.session.commit()

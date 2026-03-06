@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS users (
     phone VARCHAR(20),
     reset_token VARCHAR(255) UNIQUE,
     reset_token_expiration TIMESTAMP WITH TIME ZONE,
+    forgot_password_code VARCHAR(6),
+    forgot_password_code_expires_at TIMESTAMP WITH TIME ZONE,
+    allergic_to_cinnamon BOOLEAN,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     
     CONSTRAINT fk_user_role FOREIGN KEY (role_id) REFERENCES roles(id)
@@ -65,6 +68,7 @@ CREATE TABLE IF NOT EXISTS orders (
     paid_at TIMESTAMP WITH TIME ZONE,
     tracking_url VARCHAR(512),
     comments TEXT,
+    allergic_to_cinnamon BOOLEAN,
 
     CONSTRAINT fk_order_user FOREIGN KEY (user_id) REFERENCES users(id),
     CONSTRAINT fk_order_product FOREIGN KEY (product_id) REFERENCES products(id)

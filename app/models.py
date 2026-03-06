@@ -11,9 +11,12 @@ class User(db.Model):
     password = db.Column(db.String(255), nullable=False)
     reset_token = db.Column(db.String(255), unique=True, nullable=True)
     reset_token_expiration = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
+    forgot_password_code = db.Column(db.String(6), nullable=True)
+    forgot_password_code_expires_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
     first_name = db.Column(db.String(50), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
     phone = db.Column(db.String(20), nullable=True)
+    allergic_to_cinnamon = db.Column(db.Boolean, nullable=True)
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=db.func.now())
 
     def to_dict(self):
@@ -24,6 +27,7 @@ class User(db.Model):
             "first_name": self.first_name,
             "last_name": self.last_name,
             "phone": self.phone,
+            "allergic_to_cinnamon": self.allergic_to_cinnamon,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -113,6 +117,7 @@ class Order(db.Model):
     paid_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
     tracking_url = db.Column(db.String(512), nullable=True)
     comments = db.Column(db.Text, nullable=True)
+    allergic_to_cinnamon = db.Column(db.Boolean, nullable=True)
 
     product = db.relationship('Product', backref=db.backref('orders', lazy='joined'), lazy='joined')
 
@@ -144,6 +149,7 @@ class Order(db.Model):
             "paid_at": self.paid_at.isoformat() if self.paid_at else None,
             "tracking_url": self.tracking_url,
             "comments": self._comments_as_list(),
+            "allergic_to_cinnamon": self.allergic_to_cinnamon,
         }
     
 

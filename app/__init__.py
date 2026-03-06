@@ -5,6 +5,7 @@ import os
 from datetime import timedelta
 from app.extensions import db, jwt
 from app.routes import main
+from app.utils.email import mail
 
 load_dotenv()
 
@@ -18,8 +19,15 @@ def create_app():
     app.config["JWT_HEADER_NAME"] = "Authorization"
     app.config["JWT_HEADER_TYPE"] = "Bearer"
 
+    app.config["MAIL_SERVER"] = os.getenv("MAIL_SERVER")
+    app.config["MAIL_PORT"] = int(os.getenv("MAIL_PORT", 587))
+    app.config["MAIL_USE_TLS"] = os.getenv("MAIL_USE_TLS", "true").lower() in ("true", "1", "t")
+    app.config["MAIL_USERNAME"] = os.getenv("MAIL_USERNAME")
+    app.config["MAIL_PASSWORD"] = os.getenv("MAIL_PASSWORD")
+
     db.init_app(app)
     jwt.init_app(app)
+    mail.init_app(app)
 
     @jwt.unauthorized_loader
     def unauthorized_callback(reason):
