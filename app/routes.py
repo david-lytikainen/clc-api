@@ -227,26 +227,113 @@ def get_product(product_id):
     pd = product.to_dict()
     all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
     pd['image_urls'] = [_presign_key(img.s3_key) for img in all_images]
+    pd['image_ids'] = [img.id for img in all_images]
     return jsonify(pd), 200
 
-@main.route("/test-email", methods=["POST"])
-def test_email():
-    
-    ses = boto3.client(
-        "ses",
-        region_name=os.getenv("AWS_REGION"),
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
-    )
-    response = ses.send_email(
-        Source="orders@cinnamonleatherco.com",
-        Destination={"ToAddresses": ["david.lytikainen@gmail.com", "kate.lytikainen@gmail.com"]},
-        Message={
-            "Subject": {"Data": "Cinnamon Leather Co Test Email"},
-            "Body": {"Text": {"Data": "This is a test email from Cinnamon Leather Co."}}
-        }
-    )
-    return {"message_id": response["MessageId"]}
+@main.route('/product/<int:product_id>', methods=['PATCH'])
+@jwt_required()
+def update_product(product_id):
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    product = Product.query.get_or_404(product_id)
+    data = request.get_json() or {}
+    if 'title' in data and data['title'] is not None:
+        product.title = str(data['title']).strip()[:200]
+    if 'description' in data:
+        product.description = str(data['description']).strip() if data['description'] else None
+    if 'price' in data and data['price'] is not None:
+        try:
+            product.price = float(data['price'])
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Invalid price'}), 400
+    if 'dimensions' in data and data['dimensions'] is not None:
+        product.dimensions = str(data['dimensions']).strip()[:100]
+    if 'color' in data and data['color'] is not None:
+        product.color = str(data['color']).strip()[:50]
+    db.session.commit()
+    pd = product.to_dict()
+    all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
+    pd['image_urls'] = [_presign_key(img.s3_key) for img in all_images]
+    pd['image_ids'] = [img.id for img in all_images]
+    return jsonify(pd), 200
+
+@main.route('/product/<int:product_id>/images/order', methods=['PUT'])
+@jwt_required()
+def reorder_product_images(product_id):
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    product = Product.query.get_or_404(product_id)
+    data = request.get_json() or {}
+    order = data.get('order')
+    if not isinstance(order, list) or len(order) == 0:
+        return jsonify({'error': 'order must be a non-empty list of image ids'}), 400
+    try:
+        order = [int(x) for x in order]
+    except (TypeError, ValueError):
+        return jsonify({'error': 'order must be integers'}), 400
+    images = ProductImage.query.filter_by(product_id=product.id).all()
+    id_to_img = {img.id: img for img in images}
+    if set(order) != set(id_to_img.keys()):
+        return jsonify({'error': 'order must contain exactly the same image ids as the product'}), 400
+    for idx, img_id in enumerate(order):
+        id_to_img[img_id].sort_order = idx
+    db.session.commit()
+    all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
+    pd = product.to_dict()
+    pd['image_urls'] = [_presign_key(img.s3_key) for img in all_images]
+    pd['image_ids'] = [img.id for img in all_images]
+    return jsonify(pd), 200
+
+@main.route('/product/<int:product_id>/images/<int:image_id>', methods=['DELETE'])
+@jwt_required()
+def delete_product_image(product_id, image_id):
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    product = Product.query.get_or_404(product_id)
+    img = ProductImage.query.filter_by(id=image_id, product_id=product.id).first()
+    if not img:
+        return jsonify({'error': 'Image not found'}), 404
+    db.session.delete(img)
+    db.session.commit()
+    all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
+    pd = product.to_dict()
+    pd['image_urls'] = [_presign_key(i.s3_key) for i in all_images]
+    pd['image_ids'] = [i.id for i in all_images]
+    return jsonify(pd), 200
+
+@main.route('/product/<int:product_id>/images', methods=['POST'])
+@jwt_required()
+def add_product_image(product_id):
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    product = Product.query.get_or_404(product_id)
+    f = request.files.get('image')
+    if not f or not f.filename:
+        return jsonify({'error': 'No image file'}), 400
+    try:
+        s3 = _make_s3_client()
+        bucket = os.getenv('S3_BUCKET')
+        filename = secure_filename(f.filename or '')
+        ext = pathlib.Path(filename).suffix or ''
+        key = f"products/{product.id}/{uuid4().hex}{ext}"
+        extra_args = {}
+        if hasattr(f, 'mimetype') and f.mimetype:
+            extra_args['ContentType'] = f.mimetype
+        s3.upload_fileobj(f, bucket, key, ExtraArgs=extra_args or None)
+        max_order = db.session.query(db.func.max(ProductImage.sort_order)).filter_by(product_id=product.id).scalar() or -1
+        pi = ProductImage(product_id=product.id, s3_key=key, sort_order=int(max_order) + 1)
+        db.session.add(pi)
+        db.session.commit()
+        all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
+        pd = product.to_dict()
+        pd['image_urls'] = [_presign_key(img.s3_key) for img in all_images]
+        pd['image_ids'] = [img.id for img in all_images]
+        return jsonify(pd), 200
+    except Exception:
+        logger.exception('Failed to add product image')
+        db.session.rollback()
+        return jsonify({'error': 'Failed to add image'}), 500
+
 
 @main.route('/create-cart-checkout-session', methods=['POST'])
 @jwt_required(optional=True)
