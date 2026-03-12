@@ -24,6 +24,8 @@ def create_app():
     app.config["MAIL_USE_TLS"] = os.getenv("MAIL_USE_TLS", "true").lower() in ("true", "1", "t")
     app.config["MAIL_USERNAME"] = os.getenv("MAIL_USERNAME")
     app.config["MAIL_PASSWORD"] = os.getenv("MAIL_PASSWORD")
+    base_url = (os.getenv("CLIENT_URL")).rstrip("/")
+    app.config["EMAIL_LOGO_URL"] = f"{base_url}/logo.svg"
 
     db.init_app(app)
     jwt.init_app(app)

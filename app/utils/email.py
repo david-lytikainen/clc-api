@@ -1,4 +1,4 @@
-from flask import current_app
+from flask import current_app, render_template
 from flask_mail import Message, Mail
 from threading import Thread
 
@@ -13,21 +13,118 @@ def send_async_email(app, msg):
             app.logger.error("Failed to send email: %s", e)
 
 
+def _logo_url():
+    return current_app.config.get("EMAIL_LOGO_URL")
+
+
 def send_password_reset_code_email(user, code):
     app = current_app._get_current_object()
     if app.testing:
         app.logger.info("--- MOCK EMAIL --- To: %s | Code: %s --- END MOCK EMAIL ---", user.email, code)
         return
 
-    body_html = f"""
-    <p>Your password reset code is:</p>
-    <h1>{code}</h1>
-    <p>This code expires in 15 minutes.</p>
-    """
+    body_html = render_template("email/password_reset.html", user=user, code=code, logo_url=_logo_url())
     msg = Message(
         "Your password reset code",
         sender=("Cinnamon Leather Co", app.config.get("MAIL_USERNAME")),
         recipients=[user.email],
+        html=body_html,
+    )
+    Thread(target=send_async_email, args=(app, msg)).start()
+
+
+def send_confirm_email(user, verify_url):
+    app = current_app._get_current_object()
+    if app.testing:
+        app.logger.info("--- MOCK EMAIL --- To: %s | Verify: %s --- END MOCK EMAIL ---", user.email, verify_url)
+        return
+
+    body_html = render_template("email/confirm_email.html", user=user, verify_url=verify_url, logo_url=_logo_url())
+    msg = Message(
+        "Confirm your email address",
+        sender=("Cinnamon Leather Co", app.config.get("MAIL_USERNAME")),
+        recipients=[user.email],
+        html=body_html,
+    )
+    Thread(target=send_async_email, args=(app, msg)).start()
+
+
+def send_welcome_email(user):
+    app = current_app._get_current_object()
+    if app.testing:
+        app.logger.info("--- MOCK EMAIL --- To: %s | Welcome --- END MOCK EMAIL ---", user.email)
+        return
+
+    body_html = render_template("email/welcome.html", user=user, logo_url=_logo_url())
+    msg = Message(
+        "Welcome to Cinnamon Leather Company!",
+        sender=("Cinnamon Leather Co", app.config.get("MAIL_USERNAME")),
+        recipients=[user.email],
+        html=body_html,
+    )
+    Thread(target=send_async_email, args=(app, msg)).start()
+
+
+def send_receipt_email(customer_email, order_date, order_number, product_names, total):
+    app = current_app._get_current_object()
+    if app.testing:
+        app.logger.info("--- MOCK EMAIL --- To: %s | Receipt order %s --- END MOCK EMAIL ---", customer_email, order_number)
+        return
+
+    body_html = render_template(
+        "email/receipt.html",
+        order_date=order_date,
+        order_number=order_number,
+        product_names=product_names,
+        total=total,
+        logo_url=_logo_url(),
+    )
+    msg = Message(
+        "Thank you for your purchase!",
+        sender=("Cinnamon Leather Co", app.config.get("MAIL_USERNAME")),
+        recipients=[customer_email],
+        html=body_html,
+    )
+    Thread(target=send_async_email, args=(app, msg)).start()
+
+
+def send_shipped_email(customer_email, order_number, tracking_url=None):
+    app = current_app._get_current_object()
+    if app.testing:
+        app.logger.info("--- MOCK EMAIL --- To: %s | Shipped order %s --- END MOCK EMAIL ---", customer_email, order_number)
+        return
+
+    body_html = render_template(
+        "email/shipped.html",
+        order_number=order_number,
+        tracking_url=tracking_url,
+        logo_url=_logo_url(),
+    )
+    msg = Message(
+        "Something special is on its way!",
+        sender=("Cinnamon Leather Co", app.config.get("MAIL_USERNAME")),
+        recipients=[customer_email],
+        html=body_html,
+    )
+    Thread(target=send_async_email, args=(app, msg)).start()
+
+
+def send_delivered_email(customer_email, order_number, delivery_date):
+    app = current_app._get_current_object()
+    if app.testing:
+        app.logger.info("--- MOCK EMAIL --- To: %s | Delivered order %s --- END MOCK EMAIL ---", customer_email, order_number)
+        return
+
+    body_html = render_template(
+        "email/delivered.html",
+        order_number=order_number,
+        delivery_date=delivery_date,
+        logo_url=_logo_url(),
+    )
+    msg = Message(
+        "Your order has been delivered!",
+        sender=("Cinnamon Leather Co", app.config.get("MAIL_USERNAME")),
+        recipients=[customer_email],
         html=body_html,
     )
     Thread(target=send_async_email, args=(app, msg)).start()

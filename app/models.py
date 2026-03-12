@@ -13,6 +13,9 @@ class User(db.Model):
     reset_token_expiration = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
     forgot_password_code = db.Column(db.String(6), nullable=True)
     forgot_password_code_expires_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
+    email_verified = db.Column(db.Boolean, nullable=False, server_default=db.text("false"))
+    email_verify_token = db.Column(db.String(255), unique=True, nullable=True)
+    email_verify_token_expires_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
     first_name = db.Column(db.String(50), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
     phone = db.Column(db.String(20), nullable=True)
@@ -29,6 +32,7 @@ class User(db.Model):
             "phone": self.phone,
             "allergic_to_cinnamon": self.allergic_to_cinnamon,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "email_verified": bool(self.email_verified),
         }
 
 class Role(db.Model):

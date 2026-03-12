@@ -5,7 +5,14 @@ import json
 from sqlalchemy.orm import joinedload
 from app.extensions import db
 from app.models import User, ProductType, Product, ProductImage, Order, Cart, Banner
-from app.utils.email import send_password_reset_code_email
+from app.utils.email import (
+    send_password_reset_code_email,
+    send_confirm_email,
+    send_welcome_email,
+    send_receipt_email,
+    send_shipped_email,
+    send_delivered_email,
+)
 from uuid import uuid4
 import pathlib
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -52,20 +59,28 @@ def create_account():
 
     try:
         hashed_password = generate_password_hash(data["password"])
+        verify_token = str(uuid4())
         user = User(
             role_id=1,
             email=data["email"],
             password=hashed_password,
             first_name=data["first_name"],
             last_name=data["last_name"],
+            email_verify_token=verify_token,
+            email_verify_token_expires_at=datetime.now(timezone.utc) + timedelta(days=7),
         )
         db.session.add(user)
         db.session.commit()
 
+        frontend_url = (os.getenv("CLIENT_URL") or os.getenv("FRONTEND_URL") or "http://localhost:3000").rstrip("/")
+        verify_url = f"{frontend_url}/verify-email?token={verify_token}"
+        send_confirm_email(user, verify_url)
+
         token = create_access_token(identity=str(user.id), expires_delta=timedelta(days=1))
         return jsonify({"token": token, "user": user.to_dict()}), 201
-    
+
     except Exception as e:
+        logger.exception("Create account failed: %s", e)
         db.session.rollback()
         return jsonify({"error": "Failed to create user"}), 500
 
@@ -141,6 +156,32 @@ def reset_password():
     db.session.commit()
     token = create_access_token(identity=str(user.id), expires_delta=timedelta(days=1))
     return jsonify({"token": token, "user": user.to_dict()}), 200
+
+
+@main.route("/verify-email", methods=["POST"])
+def verify_email():
+    data = request.get_json() or {}
+    token = (data.get("token") or "").strip()
+    if not token:
+        return jsonify({"error": "Token is required"}), 400
+    user = User.query.filter_by(email_verify_token=token, email_verified=False).first()
+    if not user:
+        return jsonify({"error": "Invalid or expired link"}), 400
+    if not user.email_verify_token_expires_at or user.email_verify_token_expires_at < datetime.now(timezone.utc):
+        return jsonify({"error": "Invalid or expired link"}), 400
+
+    updated = User.query.filter_by(id=user.id, email_verify_token=token, email_verified=False).update(
+        {
+            "email_verified": True,
+            "email_verify_token": None,
+            "email_verify_token_expires_at": None,
+        },
+        synchronize_session=False,
+    )
+    db.session.commit()
+    if updated == 1:
+        send_welcome_email(user)
+    return jsonify({"message": "Email verified"}), 200
 
 
 @main.route('/me', methods=['GET'])
@@ -638,6 +679,27 @@ def stripe_webhook():
                     db.session.add(order)
                 db.session.commit()
                 logger.info('Created %s order(s) for session %s', len(line_items_list) or 1, session_obj.id)
+                if customer_email:
+                    orders_for_receipt = Order.query.filter_by(session_id=session_obj.id).order_by(Order.id).all()
+                    if orders_for_receipt:
+                        first = orders_for_receipt[0]
+                        order_date = first.created_at.strftime('%B %d, %Y') if first.created_at else ''
+                        product_parts = []
+                        total_cents = 0
+                        for o in orders_for_receipt:
+                            title = o.product.title if o.product else 'Item'
+                            qty = o.quantity or 1
+                            product_parts.append(f"{title} × {qty}")
+                            total_cents += o.amount_cents or 0
+                        product_names = ', '.join(product_parts)
+                        total_formatted = f"${total_cents / 100:.2f}"
+                        send_receipt_email(
+                            customer_email,
+                            order_date,
+                            first.order_number,
+                            product_names,
+                            total_formatted,
+                        )
                 if user_id_val is not None:
                     cart = Cart.query.filter_by(user_id=user_id_val).first()
                     if cart:
@@ -801,6 +863,13 @@ def admin_update_order(order_number):
         for o in orders:
             o.comments = raw
     db.session.commit()
+    new_status = data.get('status')
+    recipient = orders[0].customer_email if orders else None
+    if recipient and new_status == 'Shipped':
+        send_shipped_email(recipient, order_number, orders[0].tracking_url)
+    elif recipient and new_status == 'Delivered':
+        delivery_date = datetime.now(timezone.utc).strftime('%B %d, %Y')
+        send_delivered_email(recipient, order_number, delivery_date)
     out = [_order_to_dict_with_product(o) for o in orders]
     return jsonify({'order_number': order_number, 'orders': out}), 200
 
