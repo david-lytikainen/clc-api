@@ -15,12 +15,12 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY_PROD }}
           script: |
             set -e
-            cd /home/ubuntu/CLC/clc-api
+            cd /home/${{ secrets.SSH_USERNAME }}/CLC/clc-api
             pwd
             echo ${{ secrets.DOTENV }}
-            # git fetch origin
-            # git checkout ${{ github.ref_name }}
-            # git pull origin ${{ github.ref_name }}
-            # source venv/bin/activate
-            # pip install -r requirements.txt
-            # sudo systemctl restart <SERVICE_NAME>.service
+            git fetch origin
+            git checkout ${{ github.ref_name }}
+            git pull origin ${{ github.ref_name }}
+            source venv/bin/activate
+            pip install -r requirements.txt
+            sudo systemctl restart clc.service
