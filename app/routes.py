@@ -247,7 +247,10 @@ def _presign_key(key: str, expires: int = 3600) -> str:
         return ''
 
 @main.route('/products/create', methods=['POST'])
+@jwt_required()
 def create_product():
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
     form = request.form
     required = ['title', 'price', 'description', 'product_type_id', 'dimensions', 'color']
     missing = [f for f in required if not form.get(f)]
