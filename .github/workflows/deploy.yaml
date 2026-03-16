@@ -17,6 +17,7 @@ jobs:
             set -e
             cd /home/ubuntu/CLC/clc-api
             pwd
+            echo ${{ secrets.DOTENV }}
             # git fetch origin
             # git checkout ${{ github.ref_name }}
             # git pull origin ${{ github.ref_name }}
