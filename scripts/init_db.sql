@@ -103,3 +103,21 @@ CREATE TABLE IF NOT EXISTS carts (
 CREATE INDEX IF NOT EXISTS idx_carts_user_id ON carts(user_id);
 CREATE INDEX IF NOT EXISTS idx_carts_guest_token ON carts(guest_token);
 
+-- Home page banner pictures (S3); banner_index 0, 1, 2 = first, second, third slot
+CREATE TABLE IF NOT EXISTS banner_pictures (
+    id SERIAL PRIMARY KEY,
+    s3_key VARCHAR(512) NOT NULL,
+    banner_index INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_banner_pictures_banner_index ON banner_pictures(banner_index);
+
+-- Home page footer pictures (S3); footer_index 0, 1 = first, second slot
+CREATE TABLE IF NOT EXISTS footer_pictures (
+    id SERIAL PRIMARY KEY,
+    s3_key VARCHAR(512) NOT NULL,
+    footer_index INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_footer_pictures_footer_index ON footer_pictures(footer_index);
+

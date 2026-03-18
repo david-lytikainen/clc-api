@@ -192,3 +192,33 @@ class Banner(db.Model):
             'background_color': self.background_color,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class BannerPicture(db.Model):
+    __tablename__ = 'banner_pictures'
+
+    id = db.Column(db.Integer, primary_key=True)
+    s3_key = db.Column(db.String(512), nullable=False)
+    banner_index = db.Column(db.Integer, nullable=True)  # 0, 1, 2 for the three homepage slots
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            's3_key': self.s3_key,
+            'banner_index': self.banner_index,
+        }
+
+
+class FooterPicture(db.Model):
+    __tablename__ = 'footer_pictures'
+
+    id = db.Column(db.Integer, primary_key=True)
+    s3_key = db.Column(db.String(512), nullable=False)
+    footer_index = db.Column(db.Integer, nullable=True)  # 0, 1 for the two footer slots
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            's3_key': self.s3_key,
+            'footer_index': self.footer_index,
+        }

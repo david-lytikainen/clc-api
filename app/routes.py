@@ -4,7 +4,7 @@ from datetime import timedelta, datetime, timezone
 import json
 from sqlalchemy.orm import joinedload
 from app.extensions import db
-from app.models import User, ProductType, Product, ProductImage, Order, Cart, Banner
+from app.models import User, ProductType, Product, ProductImage, Order, Cart, Banner, BannerPicture, FooterPicture
 from app.utils.email import (
     send_password_reset_code_email,
     send_confirm_email,
@@ -224,6 +224,160 @@ def update_me():
 def get_product_types():
     pts = ProductType.query.order_by(ProductType.name).all()
     return jsonify([p.to_dict() for p in pts]), 200
+
+
+def _banner_pictures_response():
+    pics = (
+        BannerPicture.query.filter(BannerPicture.banner_index.in_([0, 1, 2]))
+        .order_by(BannerPicture.banner_index)
+        .all()
+    )
+    return [{"id": p.id, "s3_key": p.s3_key, "banner_index": p.banner_index, "image_url": _presign_key(p.s3_key)} for p in pics]
+
+
+@main.route("/banner-pictures", methods=["GET"])
+def get_banner_pictures():
+    return jsonify(_banner_pictures_response()), 200
+
+
+@main.route("/banner-pictures", methods=["PUT"])
+@jwt_required()
+def update_banner_pictures():
+    if not _is_admin():
+        return jsonify({"error": "Forbidden"}), 403
+    form = request.form
+    files = request.files
+    s3 = _make_s3_client()
+    bucket = os.getenv("S3_BUCKET")
+    if not bucket:
+        return jsonify({"error": "S3 not configured"}), 500
+
+    # Desired slot state: for each index 0,1,2 either (s3_key, from_upload) or (keep_id,) or None (clear)
+    desired = {}
+    for n in [0, 1, 2]:
+        slot_file = files.get(f"slot_{n}_file")
+        keep_id = form.get(f"slot_{n}_keep_id")
+        if slot_file and slot_file.filename:
+            filename = secure_filename(slot_file.filename or "")
+            ext = pathlib.Path(filename).suffix or ""
+            key = f"banner/{uuid4().hex}{ext}"
+            extra = {}
+            if getattr(slot_file, "mimetype", None):
+                extra["ContentType"] = slot_file.mimetype
+            try:
+                s3.upload_fileobj(slot_file, bucket, key, ExtraArgs=extra or None)
+            except Exception:
+                logger.exception("Banner picture upload failed for slot %s", n)
+                return jsonify({"error": "Upload failed"}), 500
+            desired[n] = ("key", key)
+        elif keep_id:
+            try:
+                desired[n] = ("id", int(keep_id))
+            except (TypeError, ValueError):
+                pass
+        else:
+            desired[n] = None
+
+    try:
+        # Remove all current slot assignments (delete or set to null)
+        existing = BannerPicture.query.filter(BannerPicture.banner_index.in_([0, 1, 2])).all()
+        for p in existing:
+            p.banner_index = None
+        db.session.flush()
+        # Assign new state
+        for n in [0, 1, 2]:
+            d = desired.get(n)
+            if d is None:
+                continue
+            if d[0] == "key":
+                rec = BannerPicture(s3_key=d[1], banner_index=n)
+                db.session.add(rec)
+            else:
+                rec = BannerPicture.query.get(d[1])
+                if rec:
+                    rec.banner_index = n
+        db.session.commit()
+        return jsonify(_banner_pictures_response()), 200
+    except Exception:
+        logger.exception("Failed to update banner pictures")
+        db.session.rollback()
+        return jsonify({"error": "Failed to update banner pictures"}), 500
+
+
+def _footer_pictures_response():
+    pics = (
+        FooterPicture.query.filter(FooterPicture.footer_index.in_([0, 1]))
+        .order_by(FooterPicture.footer_index)
+        .all()
+    )
+    return [{"id": p.id, "s3_key": p.s3_key, "footer_index": p.footer_index, "image_url": _presign_key(p.s3_key)} for p in pics]
+
+
+@main.route("/footer-pictures", methods=["GET"])
+def get_footer_pictures():
+    return jsonify(_footer_pictures_response()), 200
+
+
+@main.route("/footer-pictures", methods=["PUT"])
+@jwt_required()
+def update_footer_pictures():
+    if not _is_admin():
+        return jsonify({"error": "Forbidden"}), 403
+    form = request.form
+    files = request.files
+    s3 = _make_s3_client()
+    bucket = os.getenv("S3_BUCKET")
+    if not bucket:
+        return jsonify({"error": "S3 not configured"}), 500
+
+    desired = {}
+    for n in [0, 1]:
+        slot_file = files.get(f"slot_{n}_file")
+        keep_id = form.get(f"slot_{n}_keep_id")
+        if slot_file and slot_file.filename:
+            filename = secure_filename(slot_file.filename or "")
+            ext = pathlib.Path(filename).suffix or ""
+            key = f"footer/{uuid4().hex}{ext}"
+            extra = {}
+            if getattr(slot_file, "mimetype", None):
+                extra["ContentType"] = slot_file.mimetype
+            try:
+                s3.upload_fileobj(slot_file, bucket, key, ExtraArgs=extra or None)
+            except Exception:
+                logger.exception("Footer picture upload failed for slot %s", n)
+                return jsonify({"error": "Upload failed"}), 500
+            desired[n] = ("key", key)
+        elif keep_id:
+            try:
+                desired[n] = ("id", int(keep_id))
+            except (TypeError, ValueError):
+                pass
+        else:
+            desired[n] = None
+
+    try:
+        existing = FooterPicture.query.filter(FooterPicture.footer_index.in_([0, 1])).all()
+        for p in existing:
+            p.footer_index = None
+        db.session.flush()
+        for n in [0, 1]:
+            d = desired.get(n)
+            if d is None:
+                continue
+            if d[0] == "key":
+                rec = FooterPicture(s3_key=d[1], footer_index=n)
+                db.session.add(rec)
+            else:
+                rec = FooterPicture.query.get(d[1])
+                if rec:
+                    rec.footer_index = n
+        db.session.commit()
+        return jsonify(_footer_pictures_response()), 200
+    except Exception:
+        logger.exception("Failed to update footer pictures")
+        db.session.rollback()
+        return jsonify({"error": "Failed to update footer pictures"}), 500
+
 
 def _make_s3_client():
     kwargs = {}
