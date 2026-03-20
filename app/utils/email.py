@@ -2,6 +2,7 @@ from flask import current_app, render_template
 from flask_mail import Message, Mail
 from threading import Thread
 import os
+from app.models import User
 
 mail = Mail()
 
@@ -23,6 +24,14 @@ def _client_url():
 
 def _order_link(order_number: str) -> str:
     return f"{_client_url()}/orders/{order_number}"
+
+
+def _first_name_for_email(customer_email: str) -> str:
+    try:
+        u = User.query.filter_by(email=customer_email).first()
+        return u.first_name if u and u.first_name else 'there'
+    except Exception:
+        return 'there'
 
 
 def send_password_reset_code_email(user, code):
@@ -63,7 +72,13 @@ def send_welcome_email(user):
         app.logger.info("--- MOCK EMAIL --- To: %s | Welcome --- END MOCK EMAIL ---", user.email)
         return
 
-    body_html = render_template("email/welcome.html", user=user, logo_url=_logo_url())
+    first_name = user.first_name if getattr(user, 'first_name', None) else 'there'
+    body_html = render_template(
+        "email/welcome.html",
+        user=user,
+        first_name=first_name,
+        logo_url=_logo_url(),
+    )
     msg = Message(
         "Welcome to Cinnamon Leather Company!",
         sender=("Cinnamon Leather Co", app.config.get("MAIL_USERNAME")),
@@ -86,6 +101,7 @@ def send_receipt_email(customer_email, order_date, order_number, product_names, 
         product_names=product_names,
         total=total,
         link=_order_link(order_number),
+        first_name=_first_name_for_email(customer_email),
         logo_url=_logo_url(),
     )
     msg = Message(
@@ -108,6 +124,7 @@ def send_shipped_email(customer_email, order_number, tracking_url=None):
         order_number=order_number,
         tracking_url=tracking_url,
         link=_order_link(order_number),
+        first_name=_first_name_for_email(customer_email),
         logo_url=_logo_url(),
     )
     msg = Message(
@@ -130,6 +147,7 @@ def send_delivered_email(customer_email, order_number, delivery_date):
         order_number=order_number,
         delivery_date=delivery_date,
         link=_order_link(order_number),
+        first_name=_first_name_for_email(customer_email),
         logo_url=_logo_url(),
     )
     msg = Message(
