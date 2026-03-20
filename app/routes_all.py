@@ -650,6 +650,13 @@ def create_cart_checkout_session():
             user_id = int(identity) if identity else None
         except Exception:
             pass
+        customer_email = None
+        if user_id:
+            try:
+                user = User.query.get(user_id)
+                customer_email = (user.email if user and user.email else None)
+            except Exception:
+                customer_email = None
 
         success_base = os.getenv('STRIPE_SUCCESS_URL').rstrip('/')
         order_number = _generate_order_number()
@@ -671,6 +678,8 @@ def create_cart_checkout_session():
             cancel_url=cancel_url,
             metadata=meta,
         )
+        if customer_email:
+            session_kwargs['customer_email'] = customer_email
         if user_id:
             session_kwargs['client_reference_id'] = str(user_id)
 
@@ -708,6 +717,13 @@ def create_checkout_session(price_id):
             user_id = None
     except Exception:
         user_id = None
+    customer_email = None
+    if user_id:
+        try:
+            user = User.query.get(user_id)
+            customer_email = (user.email if user and user.email else None)
+        except Exception:
+            customer_email = None
 
     try:
         success_base = os.getenv('STRIPE_SUCCESS_URL').rstrip('/')
@@ -730,6 +746,8 @@ def create_checkout_session(price_id):
             cancel_url=cancel_url,
             metadata=meta,
         )
+        if customer_email:
+            session_kwargs['customer_email'] = customer_email
         if user_id:
             session_kwargs['client_reference_id'] = str(user_id)
 
@@ -937,15 +955,8 @@ def get_orders():
     return jsonify(out), 200
 
 @main.route('/orders/<order_number>', methods=['GET'])
-@jwt_required()
 def get_order_by_number(order_number):
-    identity = get_jwt_identity()
-    try:
-        user_id = int(identity)
-    except Exception:
-        return jsonify({'error': 'Invalid token identity'}), 401
-
-    orders = Order.query.filter_by(order_number=order_number, user_id=user_id).order_by(Order.id).all()
+    orders = Order.query.filter_by(order_number=order_number).order_by(Order.id).all()
     if not orders:
         return jsonify({'error': 'Order not found'}), 404
 

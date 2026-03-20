@@ -1,8 +1,9 @@
 {% include "email/_header.html" %}
 <p>Thank you for supporting our small business, we are grateful you chose our handcrafted leather goods! Your order has been received and is now being processed. Please find your receipt and order number below:</p>
-<div style="margin:16px 0; padding:12px; background:#f9f9f9; border-radius:6px; font-family:monospace;">
+<div style="margin:16px 0; padding:12px; background:#f9f9f9; border-radius:6px;">
   <div>Order Date: {{ order_date }}</div>
   <div>Order Number: {{ order_number }}</div>
+  <div>Link to order: <a href="{{ link }}">{{ link }}</a></div>
   <div>Products: {{ product_names }}</div>
   <div>Total: {{ total }}</div>
 </div>

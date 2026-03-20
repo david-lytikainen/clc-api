@@ -1,6 +1,7 @@
 from flask import current_app, render_template
 from flask_mail import Message, Mail
 from threading import Thread
+import os
 
 mail = Mail()
 
@@ -15,6 +16,13 @@ def send_async_email(app, msg):
 
 def _logo_url():
     return current_app.config.get("EMAIL_LOGO_URL")
+
+def _client_url():
+    return os.environ["CLIENT_URL"].rstrip("/")
+
+
+def _order_link(order_number: str) -> str:
+    return f"{_client_url()}/orders/{order_number}"
 
 
 def send_password_reset_code_email(user, code):
@@ -77,6 +85,7 @@ def send_receipt_email(customer_email, order_date, order_number, product_names, 
         order_number=order_number,
         product_names=product_names,
         total=total,
+        link=_order_link(order_number),
         logo_url=_logo_url(),
     )
     msg = Message(
@@ -98,6 +107,7 @@ def send_shipped_email(customer_email, order_number, tracking_url=None):
         "email/shipped.html",
         order_number=order_number,
         tracking_url=tracking_url,
+        link=_order_link(order_number),
         logo_url=_logo_url(),
     )
     msg = Message(
@@ -119,6 +129,7 @@ def send_delivered_email(customer_email, order_number, delivery_date):
         "email/delivered.html",
         order_number=order_number,
         delivery_date=delivery_date,
+        link=_order_link(order_number),
         logo_url=_logo_url(),
     )
     msg = Message(
