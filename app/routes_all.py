@@ -409,6 +409,24 @@ def _presign_key(key: str, expires: int = 3600) -> str:
         return ''
 
 
+def _product_card_image_urls(product_id: int) -> list:
+    images = (
+        ProductImage.query.filter_by(product_id=product_id)
+        .order_by(ProductImage.sort_order)
+        .all()
+    )
+    seen = set()
+    out = []
+    for img in images:
+        if img.color_id in seen:
+            continue
+        seen.add(img.color_id)
+        url = _presign_key(img.s3_key)
+        if url:
+            out.append(url)
+    return out
+
+
 def _product_with_images_payload(product: Product) -> dict:
     pd = product.to_dict()
     all_images = (
@@ -506,9 +524,8 @@ def create_product():
             )
             db.session.add(pi)
         db.session.commit()
-        images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
         result = product.to_dict()
-        result['image_urls'] = [_presign_key(img.s3_key) for img in images]
+        result['image_urls'] = _product_card_image_urls(product.id)
         result['image_url'] = result['image_urls'][0] if result['image_urls'] else None
 
         return jsonify(result), 201
@@ -540,8 +557,7 @@ def get_products():
     for p in products:
         pd = p.to_dict()
         pd['product_type_name'] = p.product_type.name if p.product_type else None
-        images = ProductImage.query.filter_by(product_id=p.id).order_by(ProductImage.sort_order).all()
-        pd['image_urls'] = [_presign_key(img.s3_key) for img in images]
+        pd['image_urls'] = _product_card_image_urls(p.id)
         pd['image_url'] = pd['image_urls'][0] if pd['image_urls'] else None
         out.append(pd)
     return jsonify(out), 200
