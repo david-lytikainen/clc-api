@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS orders (
     amount_cents INTEGER,
     status VARCHAR(20),
     customer_email VARCHAR(255),
+    shipping_address TEXT NOT NULL DEFAULT '{}',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     paid_at TIMESTAMP WITH TIME ZONE,
     tracking_url VARCHAR(512),

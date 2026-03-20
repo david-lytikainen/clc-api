@@ -506,10 +506,10 @@ def create_product():
             )
             db.session.add(pi)
         db.session.commit()
-        first_image = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).first()
+        images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
         result = product.to_dict()
-        if first_image:
-            result['image_url'] = _presign_key(first_image.s3_key)
+        result['image_urls'] = [_presign_key(img.s3_key) for img in images]
+        result['image_url'] = result['image_urls'][0] if result['image_urls'] else None
 
         return jsonify(result), 201
 
@@ -540,6 +540,27 @@ def get_products():
     for p in products:
         pd = p.to_dict()
         pd['product_type_name'] = p.product_type.name if p.product_type else None
+        images = ProductImage.query.filter_by(product_id=p.id).order_by(ProductImage.sort_order).all()
+        pd['image_urls'] = [_presign_key(img.s3_key) for img in images]
+        pd['image_url'] = pd['image_urls'][0] if pd['image_urls'] else None
+        out.append(pd)
+    return jsonify(out), 200
+
+
+@main.route('/admin/products/inactive', methods=['GET'])
+@jwt_required()
+def admin_get_inactive_products():
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    products = (
+        Product.query.options(joinedload(Product.product_type))
+        .where(Product.is_active == False)
+        .order_by(Product.created_at.desc())
+        .all()
+    )
+    out = []
+    for p in products:
+        pd = p.to_dict()
         first_image = ProductImage.query.filter_by(product_id=p.id).order_by(ProductImage.sort_order).first()
         pd['image_url'] = _presign_key(first_image.s3_key) if first_image else None
         out.append(pd)
@@ -570,6 +591,8 @@ def update_product(product_id):
         product.dimensions = str(data['dimensions']).strip()[:100]
     if 'color' in data and data['color'] is not None:
         product.color = str(data['color']).strip()[:50]
+    if 'is_active' in data:
+        product.is_active = bool(data['is_active'])
     db.session.commit()
     return jsonify(_product_with_images_payload(product)), 200
 
@@ -677,6 +700,7 @@ def create_cart_checkout_session():
             success_url=success_url,
             cancel_url=cancel_url,
             metadata=meta,
+            shipping_address_collection={'allowed_countries': ['US']},
         )
         if customer_email:
             session_kwargs['customer_email'] = customer_email
@@ -745,6 +769,7 @@ def create_checkout_session(price_id):
             success_url=success_url,
             cancel_url=cancel_url,
             metadata=meta,
+            shipping_address_collection={'allowed_countries': ['US']},
         )
         if customer_email:
             session_kwargs['customer_email'] = customer_email
@@ -808,6 +833,21 @@ def stripe_webhook():
                         customer_email = session_obj.customer_details.email
                     except Exception:
                         customer_email = session_obj.get('customer_details', {}).get('email')
+                shipping_address_raw = '{}'
+                try:
+                    collected_information = getattr(session_obj, 'collected_information', None) or session_obj.get('collected_information', {})
+                    if hasattr(collected_information, 'to_dict'):
+                        collected_information = collected_information.to_dict()
+                    shipping_details = collected_information.get('shipping_details', {}) if isinstance(collected_information, dict) else {}
+                    if hasattr(shipping_details, 'to_dict'):
+                        shipping_details = shipping_details.to_dict()
+                    shipping_address_payload = shipping_details.get('address', {}) if isinstance(shipping_details, dict) else {}
+                    if hasattr(shipping_address_payload, 'to_dict'):
+                        shipping_address_payload = shipping_address_payload.to_dict()
+                    if isinstance(shipping_address_payload, dict):
+                        shipping_address_raw = json.dumps(shipping_address_payload)
+                except Exception:
+                    shipping_address_raw = '{}'
                 try:
                     user_id_val = None
                     order_number = None
@@ -897,6 +937,7 @@ def stripe_webhook():
                         amount_cents=amount_cents,
                         status='Ordered',
                         customer_email=customer_email,
+                        shipping_address=shipping_address_raw,
                         paid_at=(datetime.utcnow() if getattr(session_obj, 'payment_status', None) == 'paid' else None),
                         allergic_to_cinnamon=allergic_to_cinnamon_order,
                     )

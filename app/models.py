@@ -136,6 +136,7 @@ class Order(db.Model):
     amount_cents = db.Column(db.Integer)
     status = db.Column(db.String(20))
     customer_email = db.Column(db.String(255))
+    shipping_address = db.Column(db.Text, nullable=False, server_default=db.text("'{}'"))
     created_at = db.Column(db.TIMESTAMP(timezone=True), server_default=db.func.now())
     paid_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
     tracking_url = db.Column(db.String(512), nullable=True)
@@ -170,6 +171,7 @@ class Order(db.Model):
             "amount_cents": self.amount_cents,
             "status": self.status,
             "customer_email": self.customer_email,
+            "shipping_address": self.shipping_address,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "paid_at": self.paid_at.isoformat() if self.paid_at else None,
             "tracking_url": self.tracking_url,
