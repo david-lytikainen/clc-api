@@ -604,7 +604,7 @@ def update_product(product_id):
         except (TypeError, ValueError):
             return jsonify({'error': 'Invalid price'}), 400
     if 'dimensions' in data and data['dimensions'] is not None:
-        product.dimensions = str(data['dimensions']).strip()[:100]
+        product.dimensions = str(data['dimensions']).strip() or None
     if 'color' in data and data['color'] is not None:
         product.color = str(data['color']).strip()[:50]
     if 'is_active' in data:

@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS products (
     description TEXT,
     stripe_price_id VARCHAR(255),
     price NUMERIC(10,2) NOT NULL,
-    dimensions VARCHAR(100),
+    dimensions TEXT,
     color VARCHAR(50),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 CREATE INDEX IF NOT EXISTS idx_products_product_type_id ON products(product_type_id);
+
+-- If `products` already exists with dimensions VARCHAR(100), run once:
+-- ALTER TABLE products ALTER COLUMN dimensions TYPE TEXT USING dimensions::text;
 
 -- Orders
 CREATE TABLE IF NOT EXISTS orders (
