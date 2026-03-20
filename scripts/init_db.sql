@@ -33,6 +33,26 @@ CREATE TABLE IF NOT EXISTS product_types (
     name VARCHAR(100) UNIQUE NOT NULL
 );
 
+-- Product / catalog colors (reference)
+CREATE TABLE IF NOT EXISTS colors (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    hex VARCHAR(7) NOT NULL
+);
+
+INSERT INTO colors (id, name, hex) VALUES
+    (1, 'Classic Black', '#111014'),
+    (2, 'Toasty Brown', '#413035'),
+    (3, 'Honeycomb', '#B4793C'),
+    (4, 'Olive', '#313024'),
+    (5, 'Crimson', '#8E2825')
+ON CONFLICT (id) DO NOTHING;
+
+SELECT setval(
+    pg_get_serial_sequence('colors', 'id'),
+    COALESCE((SELECT MAX(id) FROM colors), 1)
+);
+
 -- Products
 CREATE TABLE IF NOT EXISTS products (
     id SERIAL PRIMARY KEY,
@@ -85,11 +105,14 @@ CREATE TABLE IF NOT EXISTS product_images (
     product_id INTEGER NOT NULL,
     s3_key VARCHAR(512) NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    color_id INTEGER NOT NULL,
 
-    CONSTRAINT fk_product_image_product FOREIGN KEY (product_id) REFERENCES products(id)
+    CONSTRAINT fk_product_image_product FOREIGN KEY (product_id) REFERENCES products(id),
+    CONSTRAINT fk_product_image_color FOREIGN KEY (color_id) REFERENCES colors(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_product_images_product_id ON product_images(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_images_color_id ON product_images(color_id);
 
 CREATE TABLE IF NOT EXISTS carts (
     id SERIAL PRIMARY KEY,

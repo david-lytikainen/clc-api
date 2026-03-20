@@ -4,7 +4,7 @@ from datetime import timedelta, datetime, timezone
 import json
 from sqlalchemy.orm import joinedload
 from app.extensions import db
-from app.models import User, ProductType, Product, ProductImage, Order, Cart, Banner, BannerPicture, FooterPicture
+from app.models import User, ProductType, Color, Product, ProductImage, Order, Cart, Banner, BannerPicture, FooterPicture
 from app.utils.email import (
     send_password_reset_code_email,
     send_confirm_email,
@@ -226,6 +226,12 @@ def get_product_types():
     return jsonify([p.to_dict() for p in pts]), 200
 
 
+@main.route("/colors", methods=["GET"])
+def get_colors():
+    rows = Color.query.order_by(Color.id).all()
+    return jsonify([c.to_dict() for c in rows]), 200
+
+
 def _banner_pictures_response():
     pics = (
         BannerPicture.query.filter(BannerPicture.banner_index.in_([0, 1, 2]))
@@ -400,13 +406,38 @@ def _presign_key(key: str, expires: int = 3600) -> str:
         logger.exception('Failed to presign s3 key %s', key)
         return ''
 
+
+def _product_with_images_payload(product: Product) -> dict:
+    pd = product.to_dict()
+    all_images = (
+        ProductImage.query.filter_by(product_id=product.id)
+        .order_by(ProductImage.sort_order)
+        .all()
+    )
+    pd["image_urls"] = [_presign_key(img.s3_key) for img in all_images]
+    pd["image_ids"] = [img.id for img in all_images]
+    pd["image_color_ids"] = [img.color_id for img in all_images]
+    uniq = sorted({img.color_id for img in all_images if img.color_id is not None})
+    if uniq:
+        rows = Color.query.filter(Color.id.in_(uniq)).all()
+        name_by_id = {c.id: c.name for c in rows}
+        hex_by_id = {c.id: c.hex for c in rows}
+        pd["product_colors"] = [
+            {"id": cid, "name": name_by_id.get(cid, "") or "", "hex": hex_by_id.get(cid, "") or ""}
+            for cid in uniq
+        ]
+    else:
+        pd["product_colors"] = []
+    return pd
+
+
 @main.route('/products/create', methods=['POST'])
 @jwt_required()
 def create_product():
     if not _is_admin():
         return jsonify({'error': 'Forbidden'}), 403
     form = request.form
-    required = ['title', 'price', 'description', 'product_type_id', 'dimensions', 'color']
+    required = ['title', 'price', 'description', 'product_type_id', 'dimensions']
     missing = [f for f in required if not form.get(f)]
     if missing:
         return jsonify({'error': 'Missing fields', 'missing': missing}), 400
@@ -418,7 +449,6 @@ def create_product():
             description=form.get('description'),
             price=form.get('price'),
             dimensions=form.get('dimensions'),
-            color=form.get('color'),
         )
         db.session.add(product)
         db.session.flush()  # assigns product.id
@@ -439,10 +469,22 @@ def create_product():
         bucket = os.getenv('S3_BUCKET')
         uploaded_keys = []
 
-        files = request.files.getlist('images')
+        files = [f for f in request.files.getlist('images') if f and f.filename]
+        color_id_list = request.form.getlist('image_color_ids')
+        if len(files) != len(color_id_list):
+            return jsonify({'error': 'Each image requires a color', 'missing': 'image_color_ids'}), 400
+        try:
+            parsed_color_ids = [int(x) for x in color_id_list]
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Invalid image_color_ids'}), 400
+        if files:
+            valid_color_ids = {
+                r[0] for r in db.session.query(Color.id).filter(Color.id.in_(parsed_color_ids)).all()
+            }
+            if not all(cid in valid_color_ids for cid in parsed_color_ids):
+                return jsonify({'error': 'Invalid color id'}), 400
+
         for idx, f in enumerate(files):
-            if not f:
-                continue
             filename = secure_filename(f.filename or '')
             ext = pathlib.Path(filename).suffix or ''
             key = f"products/{product.id}/{uuid4().hex}{ext}"
@@ -454,7 +496,12 @@ def create_product():
             s3.upload_fileobj(f, bucket, key, ExtraArgs=extra_args or None)
             uploaded_keys.append(key)
 
-            pi = ProductImage(product_id=product.id, s3_key=key, sort_order=idx)
+            pi = ProductImage(
+                product_id=product.id,
+                s3_key=key,
+                sort_order=idx,
+                color_id=parsed_color_ids[idx],
+            )
             db.session.add(pi)
         db.session.commit()
         first_image = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).first()
@@ -499,11 +546,7 @@ def get_products():
 @main.route('/product/<int:product_id>', methods=['GET'])
 def get_product(product_id):
     product = Product.query.get_or_404(product_id)
-    pd = product.to_dict()
-    all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
-    pd['image_urls'] = [_presign_key(img.s3_key) for img in all_images]
-    pd['image_ids'] = [img.id for img in all_images]
-    return jsonify(pd), 200
+    return jsonify(_product_with_images_payload(product)), 200
 
 @main.route('/product/<int:product_id>', methods=['PATCH'])
 @jwt_required()
@@ -526,11 +569,7 @@ def update_product(product_id):
     if 'color' in data and data['color'] is not None:
         product.color = str(data['color']).strip()[:50]
     db.session.commit()
-    pd = product.to_dict()
-    all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
-    pd['image_urls'] = [_presign_key(img.s3_key) for img in all_images]
-    pd['image_ids'] = [img.id for img in all_images]
-    return jsonify(pd), 200
+    return jsonify(_product_with_images_payload(product)), 200
 
 @main.route('/product/<int:product_id>/images/order', methods=['PUT'])
 @jwt_required()
@@ -553,11 +592,7 @@ def reorder_product_images(product_id):
     for idx, img_id in enumerate(order):
         id_to_img[img_id].sort_order = idx
     db.session.commit()
-    all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
-    pd = product.to_dict()
-    pd['image_urls'] = [_presign_key(img.s3_key) for img in all_images]
-    pd['image_ids'] = [img.id for img in all_images]
-    return jsonify(pd), 200
+    return jsonify(_product_with_images_payload(product)), 200
 
 @main.route('/product/<int:product_id>/images/<int:image_id>', methods=['DELETE'])
 @jwt_required()
@@ -570,45 +605,7 @@ def delete_product_image(product_id, image_id):
         return jsonify({'error': 'Image not found'}), 404
     db.session.delete(img)
     db.session.commit()
-    all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
-    pd = product.to_dict()
-    pd['image_urls'] = [_presign_key(i.s3_key) for i in all_images]
-    pd['image_ids'] = [i.id for i in all_images]
-    return jsonify(pd), 200
-
-@main.route('/product/<int:product_id>/images', methods=['POST'])
-@jwt_required()
-def add_product_image(product_id):
-    if not _is_admin():
-        return jsonify({'error': 'Forbidden'}), 403
-    product = Product.query.get_or_404(product_id)
-    f = request.files.get('image')
-    if not f or not f.filename:
-        return jsonify({'error': 'No image file'}), 400
-    try:
-        s3 = _make_s3_client()
-        bucket = os.getenv('S3_BUCKET')
-        filename = secure_filename(f.filename or '')
-        ext = pathlib.Path(filename).suffix or ''
-        key = f"products/{product.id}/{uuid4().hex}{ext}"
-        extra_args = {}
-        if hasattr(f, 'mimetype') and f.mimetype:
-            extra_args['ContentType'] = f.mimetype
-        s3.upload_fileobj(f, bucket, key, ExtraArgs=extra_args or None)
-        max_order = db.session.query(db.func.max(ProductImage.sort_order)).filter_by(product_id=product.id).scalar() or -1
-        pi = ProductImage(product_id=product.id, s3_key=key, sort_order=int(max_order) + 1)
-        db.session.add(pi)
-        db.session.commit()
-        all_images = ProductImage.query.filter_by(product_id=product.id).order_by(ProductImage.sort_order).all()
-        pd = product.to_dict()
-        pd['image_urls'] = [_presign_key(img.s3_key) for img in all_images]
-        pd['image_ids'] = [img.id for img in all_images]
-        return jsonify(pd), 200
-    except Exception:
-        logger.exception('Failed to add product image')
-        db.session.rollback()
-        return jsonify({'error': 'Failed to add image'}), 500
-
+    return jsonify(_product_with_images_payload(product)), 200
 
 @main.route('/create-cart-checkout-session', methods=['POST'])
 @jwt_required(optional=True)

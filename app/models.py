@@ -55,6 +55,21 @@ class ProductType(db.Model):
         }
 
 
+class Color(db.Model):
+    __tablename__ = "colors"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    hex = db.Column(db.String(7), nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "hex": self.hex,
+        }
+
+
 class Product(db.Model):
     __tablename__ = "products"
 
@@ -93,8 +108,10 @@ class ProductImage(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
     s3_key = db.Column(db.String(512), nullable=False)
     sort_order = db.Column(db.Integer, nullable=False, server_default=db.text('0'))
+    color_id = db.Column(db.Integer, db.ForeignKey("colors.id"), nullable=False)
 
     product = db.relationship("Product", backref=db.backref("images", lazy=True))
+    color = db.relationship("Color", backref=db.backref("product_images", lazy=True))
 
     def to_dict(self):
         return {
@@ -102,6 +119,7 @@ class ProductImage(db.Model):
             "product_id": self.product_id,
             "s3_key": self.s3_key,
             "sort_order": self.sort_order,
+            "color_id": self.color_id,
         }
 
 class Order(db.Model):
