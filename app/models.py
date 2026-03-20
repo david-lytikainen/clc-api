@@ -127,6 +127,7 @@ class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=False)
+    color_id = db.Column(db.Integer, db.ForeignKey('colors.id'), nullable=False)
     session_id = db.Column(db.String(255), nullable=False, index=True)
     order_number = db.Column(db.String(6), nullable=True, index=True)
     payment_intent_id = db.Column(db.String(255))
@@ -142,6 +143,7 @@ class Order(db.Model):
     allergic_to_cinnamon = db.Column(db.Boolean, nullable=True)
 
     product = db.relationship('Product', backref=db.backref('orders', lazy='joined'), lazy='joined')
+    color = db.relationship('Color', backref=db.backref('orders', lazy='joined'), lazy='joined')
 
     def _comments_as_list(self):
         if not self.comments or not self.comments.strip():
@@ -159,6 +161,7 @@ class Order(db.Model):
             "id": self.id,
             "user_id": self.user_id,
             "product_id": self.product_id,
+            "color_id": self.color_id,
             "session_id": self.session_id,
             "order_number": self.order_number,
             "payment_intent_id": self.payment_intent_id,

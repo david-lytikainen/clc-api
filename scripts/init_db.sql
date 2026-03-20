@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS orders (
     id SERIAL PRIMARY KEY,
     user_id INTEGER,
     product_id INTEGER NOT NULL,
+    color_id INTEGER NOT NULL,
     session_id VARCHAR(255) NOT NULL,
     order_number VARCHAR(6),
     payment_intent_id VARCHAR(255),
@@ -91,7 +92,8 @@ CREATE TABLE IF NOT EXISTS orders (
     allergic_to_cinnamon BOOLEAN,
 
     CONSTRAINT fk_order_user FOREIGN KEY (user_id) REFERENCES users(id),
-    CONSTRAINT fk_order_product FOREIGN KEY (product_id) REFERENCES products(id)
+    CONSTRAINT fk_order_product FOREIGN KEY (product_id) REFERENCES products(id),
+    CONSTRAINT fk_order_color FOREIGN KEY (color_id) REFERENCES colors(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);

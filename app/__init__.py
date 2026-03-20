@@ -4,7 +4,8 @@ from flask_cors import CORS
 import os
 from datetime import timedelta
 from app.extensions import db, jwt
-from app.routes import main
+from app.routes_all import main
+from app.routes.user_routes import user_bp
 from app.utils.email import mail
 
 load_dotenv()
@@ -44,6 +45,7 @@ def create_app():
         return jsonify({"error": "Token expired", "msg": "Token has expired"}), 401
 
     app.register_blueprint(main, url_prefix="/api")
+    app.register_blueprint(user_bp, url_prefix="/api")
 
     CORS(
         app,

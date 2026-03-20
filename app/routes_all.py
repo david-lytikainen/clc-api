@@ -34,6 +34,45 @@ def _generate_order_number():
             return num
     return str(random.randint(100000, 999999))
 
+
+def _product_has_color_image(product_id: int, color_id: int) -> bool:
+    if Color.query.get(color_id) is None:
+        return False
+    return (
+        ProductImage.query.filter_by(product_id=product_id, color_id=color_id).first()
+        is not None
+    )
+
+
+def _first_image_for_product_color(product_id: int, color_id: int):
+    return (
+        ProductImage.query.filter_by(product_id=product_id, color_id=color_id)
+        .order_by(ProductImage.sort_order)
+        .first()
+    )
+
+
+def _stripe_metadata_dict(session_obj):
+    meta = getattr(session_obj, "metadata", None) or {}
+    if hasattr(meta, "to_dict"):
+        try:
+            return dict(meta)
+        except Exception:
+            pass
+    if isinstance(meta, dict):
+        return meta
+    try:
+        return dict(meta)
+    except Exception:
+        return {}
+
+
+def _order_image_url(order: Order):
+    if not order.product_id or not order.color_id:
+        return None
+    img = _first_image_for_product_color(order.product_id, order.color_id)
+    return _presign_key(img.s3_key) if img else None
+
 def _is_admin():
     try:
         identity = get_jwt_identity()
@@ -45,44 +84,7 @@ def _is_admin():
     except Exception:
         return False
 
-@main.route("/create-account", methods=["POST"])
-def create_account():
-    data = request.get_json() or {}
 
-    required = ["first_name", "last_name", "email", "password"]
-    missing = [field for field in required if field not in data]
-    if missing:
-        return jsonify({"error": "Missing fields", "missing": missing}), 400
-    
-    if User.query.filter_by(email=data["email"]).first():
-        return jsonify({"error": "Email already exists"}), 409
-
-    try:
-        hashed_password = generate_password_hash(data["password"])
-        verify_token = str(uuid4())
-        user = User(
-            role_id=1,
-            email=data["email"],
-            password=hashed_password,
-            first_name=data["first_name"],
-            last_name=data["last_name"],
-            email_verify_token=verify_token,
-            email_verify_token_expires_at=datetime.now(timezone.utc) + timedelta(days=7),
-        )
-        db.session.add(user)
-        db.session.commit()
-
-        frontend_url = (os.getenv("CLIENT_URL") or os.getenv("FRONTEND_URL") or "http://localhost:3000").rstrip("/")
-        verify_url = f"{frontend_url}/verify-email?token={verify_token}"
-        send_confirm_email(user, verify_url)
-
-        token = create_access_token(identity=str(user.id), expires_delta=timedelta(days=1))
-        return jsonify({"token": token, "user": user.to_dict()}), 201
-
-    except Exception as e:
-        logger.exception("Create account failed: %s", e)
-        db.session.rollback()
-        return jsonify({"error": "Failed to create user"}), 500
 
 @main.route("/sign-in", methods=["POST"])
 def sign_in():
@@ -618,20 +620,25 @@ def create_cart_checkout_session():
 
     stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
     line_items = []
+    item_colors = []
     for it in raw_items:
         try:
             product_id = int(it.get('product_id'))
             quantity = int(it.get('quantity', 1))
+            color_id = int(it.get('color_id'))
         except (TypeError, ValueError):
             logger.warning('create-cart-checkout-session invalid item: %s', it)
-            return jsonify({'error': 'Each item must have product_id and quantity'}), 400
+            return jsonify({'error': 'Each item must have product_id, quantity, and color_id'}), 400
         if quantity < 1:
             continue
         product = Product.query.get(product_id)
         if not product or not product.stripe_price_id:
             logger.warning('create-cart-checkout-session product %s missing or no stripe_price_id', product_id)
             return jsonify({'error': f'Product {product_id} not found or has no Stripe price'}), 400
+        if not _product_has_color_image(product_id, color_id):
+            return jsonify({'error': f'Invalid color_id {color_id} for product {product_id}'}), 400
         line_items.append({'price': product.stripe_price_id, 'quantity': quantity})
+        item_colors.append({'color_id': color_id})
 
     if not line_items:
         return jsonify({'error': 'No valid line items'}), 400
@@ -649,7 +656,11 @@ def create_cart_checkout_session():
         success_url = f"{success_base}/orders/{order_number}"
         cancel_url = os.getenv('STRIPE_CANCEL_CART_URL').rstrip('/')
         allergic = data.get('allergic_to_cinnamon')
-        meta = {'order_number': order_number, 'user_id': str(user_id) if user_id else ''}
+        meta = {
+            'order_number': order_number,
+            'user_id': str(user_id) if user_id else '',
+            'item_colors': json.dumps(item_colors),
+        }
         if allergic is not None:
             meta['allergic_to_cinnamon'] = 'true' if allergic else 'false'
         session_kwargs = dict(
@@ -675,10 +686,17 @@ def create_checkout_session(price_id):
     data = request.get_json() or {}
     try:
         quantity = int(data.get('quantity', 1))
+        color_id = int(data.get('color_id'))
     except Exception:
-        return jsonify({'error': 'Invalid quantity'}), 400
+        return jsonify({'error': 'Invalid quantity or missing color_id'}), 400
 
     stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
+
+    product_row = Product.query.filter_by(stripe_price_id=price_id).first()
+    if not product_row:
+        return jsonify({'error': 'Product not found for price'}), 400
+    if not _product_has_color_image(product_row.id, color_id):
+        return jsonify({'error': 'Invalid color_id for this product'}), 400
 
     line_items = [{'price': price_id, 'quantity': quantity}]
 
@@ -695,10 +713,13 @@ def create_checkout_session(price_id):
         success_base = os.getenv('STRIPE_SUCCESS_URL').rstrip('/')
         order_number = _generate_order_number()
         success_url = f"{success_base}/orders/{order_number}"
-        product_id = Product.query.filter_by(stripe_price_id=price_id).first().id
-        cancel_url = os.getenv('STRIPE_CANCEL_URL') + str(product_id)
+        cancel_url = os.getenv('STRIPE_CANCEL_URL') + str(product_row.id)
         allergic = data.get('allergic_to_cinnamon')
-        meta = {'order_number': order_number, 'user_id': str(user_id) if user_id else ''}
+        meta = {
+            'order_number': order_number,
+            'user_id': str(user_id) if user_id else '',
+            'color_id': str(color_id),
+        }
         if allergic is not None:
             meta['allergic_to_cinnamon'] = 'true' if allergic else 'false'
         session_kwargs = dict(
@@ -802,7 +823,18 @@ def stripe_webhook():
                     order_number = _generate_order_number()
                     allergic_to_cinnamon_order = None
 
-                for item in (line_items_list or [{}]):
+                meta_flat = _stripe_metadata_dict(session_obj)
+                item_colors_raw = meta_flat.get('item_colors')
+                item_colors_list = []
+                if item_colors_raw:
+                    try:
+                        item_colors_list = json.loads(item_colors_raw)
+                    except (json.JSONDecodeError, TypeError):
+                        item_colors_list = []
+                single_color_meta = meta_flat.get('color_id')
+
+                rows_to_process = line_items_list if line_items_list else []
+                for idx, item in enumerate(rows_to_process):
                     price_obj = item.get('price') if isinstance(item, dict) else getattr(item, 'price', None)
                     if isinstance(price_obj, dict):
                         stripe_price_id = price_obj.get('id')
@@ -816,9 +848,29 @@ def stripe_webhook():
                     product = Product.query.filter_by(stripe_price_id=stripe_price_id).first() if stripe_price_id else None
                     product_id = product.id if product else None
 
+                    color_id_order = 1
+                    if item_colors_list and idx < len(item_colors_list):
+                        try:
+                            color_id_order = int(item_colors_list[idx].get('color_id'))
+                        except (TypeError, ValueError):
+                            color_id_order = 1
+                    elif single_color_meta is not None and len(rows_to_process) == 1:
+                        try:
+                            color_id_order = int(single_color_meta)
+                        except (TypeError, ValueError):
+                            color_id_order = 1
+                    if product_id and not _product_has_color_image(product_id, color_id_order):
+                        logger.warning(
+                            'Stripe webhook: color_id %s invalid for product %s, using 1',
+                            color_id_order,
+                            product_id,
+                        )
+                        color_id_order = 1
+
                     order = Order(
                         user_id=user_id_val,
                         product_id=product_id,
+                        color_id=color_id_order,
                         session_id=session_obj.id,
                         order_number=order_number,
                         payment_intent_id=payment_intent_id,
@@ -832,7 +884,7 @@ def stripe_webhook():
                     )
                     db.session.add(order)
                 db.session.commit()
-                logger.info('Created %s order(s) for session %s', len(line_items_list) or 1, session_obj.id)
+                logger.info('Created %s order(s) for session %s', len(rows_to_process), session_obj.id)
                 if customer_email:
                     orders_for_receipt = Order.query.filter_by(session_id=session_obj.id).order_by(Order.id).all()
                     if orders_for_receipt:
@@ -880,25 +932,7 @@ def get_orders():
 
     orders = Order.query.filter_by(user_id=user_id).order_by(Order.created_at.desc()).all()
 
-    out = []
-    for o in orders:
-        od = o.to_dict()
-        if o.product:
-            od['product_title'] = o.product.title
-            img = (
-                ProductImage.query
-                .filter_by(product_id=o.product.id)
-                .order_by(ProductImage.sort_order)
-                .first()
-            )
-            if img:
-                od['image_url'] = _presign_key(img.s3_key)
-            else:
-                od['image_url'] = None
-        else:
-            od['product_title'] = None
-            od['image_url'] = None
-        out.append(od)
+    out = [_order_to_dict_with_product(o) for o in orders]
 
     return jsonify(out), 200
 
@@ -915,25 +949,7 @@ def get_order_by_number(order_number):
     if not orders:
         return jsonify({'error': 'Order not found'}), 404
 
-    out = []
-    for o in orders:
-        od = o.to_dict()
-        if o.product:
-            od['product_title'] = o.product.title
-            img = (
-                ProductImage.query
-                .filter_by(product_id=o.product.id)
-                .order_by(ProductImage.sort_order)
-                .first()
-            )
-            if img:
-                od['image_url'] = _presign_key(img.s3_key)
-            else:
-                od['image_url'] = None
-        else:
-            od['product_title'] = None
-            od['image_url'] = None
-        out.append(od)
+    out = [_order_to_dict_with_product(o) for o in orders]
 
     return jsonify({'order_number': order_number, 'orders': out}), 200
 
@@ -941,11 +957,12 @@ def _order_to_dict_with_product(o):
     od = o.to_dict()
     if o.product:
         od['product_title'] = o.product.title
-        img = ProductImage.query.filter_by(product_id=o.product.id).order_by(ProductImage.sort_order).first()
-        od['image_url'] = _presign_key(img.s3_key) if img else None
     else:
         od['product_title'] = None
-        od['image_url'] = None
+    c = Color.query.get(o.color_id) if getattr(o, 'color_id', None) else None
+    od['color_name'] = c.name if c else None
+    od['color_hex'] = c.hex if c else None
+    od['image_url'] = _order_image_url(o)
     if o.user_id:
         u = User.query.get(o.user_id)
         if u:
