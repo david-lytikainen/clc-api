@@ -150,3 +150,23 @@ CREATE TABLE IF NOT EXISTS footer_pictures (
 
 CREATE INDEX IF NOT EXISTS idx_footer_pictures_footer_index ON footer_pictures(footer_index);
 
+-- Admin-curated "Your favorites" (ordered slots; same product may appear twice)
+CREATE TABLE IF NOT EXISTS your_favorites (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT fk_your_favorites_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_your_favorites_sort_order ON your_favorites(sort_order);
+
+CREATE TABLE IF NOT EXISTS our_favorites (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT fk_our_favorites_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+    CONSTRAINT uq_our_favorites_product_id UNIQUE (product_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_our_favorites_sort_order ON our_favorites(sort_order);
+

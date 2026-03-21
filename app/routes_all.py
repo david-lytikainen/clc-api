@@ -4,7 +4,7 @@ from datetime import timedelta, datetime, timezone
 import json
 from sqlalchemy.orm import joinedload
 from app.extensions import db
-from app.models import User, ProductType, Color, Product, ProductImage, Order, Cart, Banner, BannerPicture, FooterPicture
+from app.models import User, ProductType, Color, Product, ProductImage, Order, Cart, Banner, BannerPicture, FooterPicture, YourFavorite
 from app.utils.email import (
     send_password_reset_code_email,
     send_confirm_email,
@@ -717,6 +717,7 @@ def create_cart_checkout_session():
             cancel_url=cancel_url,
             metadata=meta,
             shipping_address_collection={'allowed_countries': ['US']},
+            automatic_tax={'enabled': True},
         )
         if customer_email:
             session_kwargs['customer_email'] = customer_email
@@ -786,6 +787,7 @@ def create_checkout_session(price_id):
             cancel_url=cancel_url,
             metadata=meta,
             shipping_address_collection={'allowed_countries': ['US']},
+            automatic_tax={'enabled': True},
         )
         if customer_email:
             session_kwargs['customer_email'] = customer_email
@@ -1139,6 +1141,58 @@ def admin_create_banner():
     db.session.add(banner)
     db.session.commit()
     return jsonify(banner.to_dict()), 201
+
+
+@main.route('/admin/your-favorites', methods=['GET'])
+@jwt_required()
+def admin_get_your_favorites():
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    rows = YourFavorite.query.order_by(YourFavorite.sort_order.asc()).all()
+    products = (
+        Product.query.filter_by(is_active=True)
+        .order_by(Product.title.asc())
+        .all()
+    )
+    return jsonify({
+        'favorites': [r.to_dict() for r in rows],
+        'products': [{'id': p.id, 'title': p.title} for p in products],
+    }), 200
+
+
+@main.route('/admin/your-favorites', methods=['PUT'])
+@jwt_required()
+def admin_put_your_favorites():
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    data = request.get_json() or {}
+    slots = data.get('slots')
+    if not isinstance(slots, list):
+        return jsonify({'error': 'slots must be an array'}), 400
+    active_products = Product.query.filter_by(is_active=True).all()
+    max_slots = len(active_products)
+    active_ids = {p.id for p in active_products}
+    if len(slots) > max_slots:
+        return jsonify({'error': f'slots may have at most {max_slots} entries'}), 400
+    for i, val in enumerate(slots):
+        if val is None:
+            continue
+        try:
+            pid = int(val)
+        except (TypeError, ValueError):
+            return jsonify({'error': f'Invalid product_id at index {i}'}), 400
+        if pid not in active_ids:
+            return jsonify({'error': f'Product {pid} is not active'}), 400
+
+    YourFavorite.query.delete()
+    for i, val in enumerate(slots):
+        if val is None:
+            continue
+        db.session.add(YourFavorite(product_id=int(val), sort_order=i))
+    db.session.commit()
+    rows = YourFavorite.query.order_by(YourFavorite.sort_order.asc()).all()
+    return jsonify({'favorites': [r.to_dict() for r in rows]}), 200
+
 
 @main.route('/sync-cart', methods=['POST'])
 @jwt_required()

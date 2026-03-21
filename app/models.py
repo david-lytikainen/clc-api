@@ -245,3 +245,20 @@ class FooterPicture(db.Model):
             's3_key': self.s3_key,
             'footer_index': self.footer_index,
         }
+
+
+class YourFavorite(db.Model):
+    __tablename__ = 'your_favorites'
+
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('products.id', ondelete='CASCADE'), nullable=False)
+    sort_order = db.Column(db.Integer, nullable=False, server_default=db.text('0'))
+
+    product = db.relationship('Product', backref=db.backref('your_favorites', lazy=True))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'product_id': self.product_id,
+            'sort_order': self.sort_order,
+        }
