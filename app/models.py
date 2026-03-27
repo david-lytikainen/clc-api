@@ -262,3 +262,37 @@ class YourFavorite(db.Model):
             'product_id': self.product_id,
             'sort_order': self.sort_order,
         }
+
+
+class OurFavorite(db.Model):
+    __tablename__ = 'our_favorites'
+
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('products.id', ondelete='CASCADE'), nullable=False)
+    sort_order = db.Column(db.Integer, nullable=False, server_default=db.text('0'))
+
+    product = db.relationship('Product', backref=db.backref('our_favorites', lazy=True))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'product_id': self.product_id,
+            'sort_order': self.sort_order,
+        }
+
+
+class ShopTheCollection(db.Model):
+    __tablename__ = 'shop_the_collection'
+
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('products.id', ondelete='CASCADE'), nullable=False)
+    sort_order = db.Column(db.Integer, nullable=False, server_default=db.text('0'))
+
+    product = db.relationship('Product', backref=db.backref('shop_the_collection', lazy=True))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'product_id': self.product_id,
+            'sort_order': self.sort_order,
+        }

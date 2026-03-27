@@ -4,7 +4,7 @@ from datetime import timedelta, datetime, timezone
 import json
 from sqlalchemy.orm import joinedload
 from app.extensions import db
-from app.models import User, ProductType, Color, Product, ProductImage, Order, Cart, Banner, BannerPicture, FooterPicture, YourFavorite
+from app.models import User, ProductType, Color, Product, ProductImage, Order, Cart, Banner, BannerPicture, FooterPicture, YourFavorite, OurFavorite, ShopTheCollection
 from app.utils.email import (
     send_password_reset_code_email,
     send_confirm_email,
@@ -409,6 +409,15 @@ def _presign_key(key: str, expires: int = 3600) -> str:
         return ''
 
 
+def _primary_product_image_url(product_id: int):
+    img = (
+        ProductImage.query.filter_by(product_id=product_id)
+        .order_by(ProductImage.sort_order.asc())
+        .first()
+    )
+    return _presign_key(img.s3_key) if img else None
+
+
 def _product_card_image_urls(product_id: int) -> list:
     images = (
         ProductImage.query.filter_by(product_id=product_id)
@@ -544,6 +553,72 @@ def create_product():
         except Exception:
             logger.exception('Failed during S3 cleanup')
         return jsonify({'error': 'Failed to create product'}), 500
+
+@main.route('/your-favorites', methods=['GET'])
+def get_your_favorites():
+    rows = (
+        YourFavorite.query.join(Product)
+        .filter(Product.is_active == True)
+        .order_by(YourFavorite.sort_order.asc())
+        .all()
+    )
+    out = []
+    for row in rows:
+        p = Product.query.options(joinedload(Product.product_type)).get(row.product_id)
+        if not p:
+            continue
+        pd = p.to_dict()
+        pd['product_type_name'] = p.product_type.name if p.product_type else None
+        primary = _primary_product_image_url(p.id)
+        pd['image_url'] = primary
+        pd['image_urls'] = [primary] if primary else []
+        out.append(pd)
+    return jsonify(out), 200
+
+
+@main.route('/our-favorites', methods=['GET'])
+def get_our_favorites():
+    rows = (
+        OurFavorite.query.join(Product)
+        .filter(Product.is_active == True)
+        .order_by(OurFavorite.sort_order.asc())
+        .all()
+    )
+    out = []
+    for row in rows:
+        p = Product.query.options(joinedload(Product.product_type)).get(row.product_id)
+        if not p:
+            continue
+        pd = p.to_dict()
+        pd['product_type_name'] = p.product_type.name if p.product_type else None
+        primary = _primary_product_image_url(p.id)
+        pd['image_url'] = primary
+        pd['image_urls'] = [primary] if primary else []
+        out.append(pd)
+    return jsonify(out), 200
+
+
+@main.route('/shop-the-collection', methods=['GET'])
+def get_shop_the_collection():
+    rows = (
+        ShopTheCollection.query.join(Product)
+        .filter(Product.is_active == True)
+        .order_by(ShopTheCollection.sort_order.asc())
+        .all()
+    )
+    out = []
+    for row in rows:
+        p = Product.query.options(joinedload(Product.product_type)).get(row.product_id)
+        if not p:
+            continue
+        pd = p.to_dict()
+        pd['product_type_name'] = p.product_type.name if p.product_type else None
+        primary = _primary_product_image_url(p.id)
+        pd['image_url'] = primary
+        pd['image_urls'] = [primary] if primary else []
+        out.append(pd)
+    return jsonify(out), 200
+
 
 @main.route('/products', methods=['GET'])
 def get_products():
@@ -1191,6 +1266,108 @@ def admin_put_your_favorites():
         db.session.add(YourFavorite(product_id=int(val), sort_order=i))
     db.session.commit()
     rows = YourFavorite.query.order_by(YourFavorite.sort_order.asc()).all()
+    return jsonify({'favorites': [r.to_dict() for r in rows]}), 200
+
+
+@main.route('/admin/our-favorites', methods=['GET'])
+@jwt_required()
+def admin_get_our_favorites():
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    rows = OurFavorite.query.order_by(OurFavorite.sort_order.asc()).all()
+    products = (
+        Product.query.filter_by(is_active=True)
+        .order_by(Product.title.asc())
+        .all()
+    )
+    return jsonify({
+        'favorites': [r.to_dict() for r in rows],
+        'products': [{'id': p.id, 'title': p.title} for p in products],
+    }), 200
+
+
+@main.route('/admin/our-favorites', methods=['PUT'])
+@jwt_required()
+def admin_put_our_favorites():
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    data = request.get_json() or {}
+    slots = data.get('slots')
+    if not isinstance(slots, list):
+        return jsonify({'error': 'slots must be an array'}), 400
+    active_products = Product.query.filter_by(is_active=True).all()
+    max_slots = len(active_products)
+    active_ids = {p.id for p in active_products}
+    if len(slots) > max_slots:
+        return jsonify({'error': f'slots may have at most {max_slots} entries'}), 400
+    for i, val in enumerate(slots):
+        if val is None:
+            continue
+        try:
+            pid = int(val)
+        except (TypeError, ValueError):
+            return jsonify({'error': f'Invalid product_id at index {i}'}), 400
+        if pid not in active_ids:
+            return jsonify({'error': f'Product {pid} is not active'}), 400
+
+    OurFavorite.query.delete()
+    for i, val in enumerate(slots):
+        if val is None:
+            continue
+        db.session.add(OurFavorite(product_id=int(val), sort_order=i))
+    db.session.commit()
+    rows = OurFavorite.query.order_by(OurFavorite.sort_order.asc()).all()
+    return jsonify({'favorites': [r.to_dict() for r in rows]}), 200
+
+
+@main.route('/admin/shop-the-collection', methods=['GET'])
+@jwt_required()
+def admin_get_shop_the_collection():
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    rows = ShopTheCollection.query.order_by(ShopTheCollection.sort_order.asc()).all()
+    products = (
+        Product.query.filter_by(is_active=True)
+        .order_by(Product.title.asc())
+        .all()
+    )
+    return jsonify({
+        'favorites': [r.to_dict() for r in rows],
+        'products': [{'id': p.id, 'title': p.title} for p in products],
+    }), 200
+
+
+@main.route('/admin/shop-the-collection', methods=['PUT'])
+@jwt_required()
+def admin_put_shop_the_collection():
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    data = request.get_json() or {}
+    slots = data.get('slots')
+    if not isinstance(slots, list):
+        return jsonify({'error': 'slots must be an array'}), 400
+    active_products = Product.query.filter_by(is_active=True).all()
+    max_slots = len(active_products)
+    active_ids = {p.id for p in active_products}
+    if len(slots) > max_slots:
+        return jsonify({'error': f'slots may have at most {max_slots} entries'}), 400
+    for i, val in enumerate(slots):
+        if val is None:
+            continue
+        try:
+            pid = int(val)
+        except (TypeError, ValueError):
+            return jsonify({'error': f'Invalid product_id at index {i}'}), 400
+        if pid not in active_ids:
+            return jsonify({'error': f'Product {pid} is not active'}), 400
+
+    ShopTheCollection.query.delete()
+    for i, val in enumerate(slots):
+        if val is None:
+            continue
+        db.session.add(ShopTheCollection(product_id=int(val), sort_order=i))
+    db.session.commit()
+    rows = ShopTheCollection.query.order_by(ShopTheCollection.sort_order.asc()).all()
     return jsonify({'favorites': [r.to_dict() for r in rows]}), 200
 
 
