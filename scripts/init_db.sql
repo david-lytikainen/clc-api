@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS products (
     price NUMERIC(10,2) NOT NULL,
     dimensions TEXT,
     color VARCHAR(50),
+    sort_order INTEGER NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 CREATE INDEX IF NOT EXISTS idx_products_product_type_id ON products(product_type_id);
+CREATE INDEX IF NOT EXISTS idx_products_sort_order ON products(sort_order);
 
 -- If `products` already exists with dimensions VARCHAR(100), run once:
 -- ALTER TABLE products ALTER COLUMN dimensions TYPE TEXT USING dimensions::text;
@@ -168,13 +170,4 @@ CREATE TABLE IF NOT EXISTS our_favorites (
 );
 
 CREATE INDEX IF NOT EXISTS idx_our_favorites_sort_order ON our_favorites(sort_order);
-
-CREATE TABLE IF NOT EXISTS shop_the_collection (
-    id SERIAL PRIMARY KEY,
-    product_id INTEGER NOT NULL,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    CONSTRAINT fk_shop_the_collection_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_shop_the_collection_sort_order ON shop_the_collection(sort_order);
 

@@ -82,6 +82,7 @@ class Product(db.Model):
     color = db.Column(db.String(50), nullable=True)
     stripe_price_id = db.Column(db.String(255), nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, server_default=db.text('true'))
+    sort_order = db.Column(db.Integer, nullable=False)
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=db.func.now())
 
     product_type = db.relationship("ProductType", backref=db.backref("products", lazy=True))
@@ -97,6 +98,7 @@ class Product(db.Model):
             "dimensions": self.dimensions,
             "color": self.color,
             "is_active": bool(self.is_active),
+            "sort_order": self.sort_order,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -272,23 +274,6 @@ class OurFavorite(db.Model):
     sort_order = db.Column(db.Integer, nullable=False, server_default=db.text('0'))
 
     product = db.relationship('Product', backref=db.backref('our_favorites', lazy=True))
-
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'product_id': self.product_id,
-            'sort_order': self.sort_order,
-        }
-
-
-class ShopTheCollection(db.Model):
-    __tablename__ = 'shop_the_collection'
-
-    id = db.Column(db.Integer, primary_key=True)
-    product_id = db.Column(db.Integer, db.ForeignKey('products.id', ondelete='CASCADE'), nullable=False)
-    sort_order = db.Column(db.Integer, nullable=False, server_default=db.text('0'))
-
-    product = db.relationship('Product', backref=db.backref('shop_the_collection', lazy=True))
 
     def to_dict(self):
         return {

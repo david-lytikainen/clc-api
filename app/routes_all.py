@@ -2,9 +2,10 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from datetime import timedelta, datetime, timezone
 import json
+from sqlalchemy import text
 from sqlalchemy.orm import joinedload
 from app.extensions import db
-from app.models import User, ProductType, Color, Product, ProductImage, Order, Cart, Banner, BannerPicture, FooterPicture, YourFavorite, OurFavorite, ShopTheCollection
+from app.models import User, ProductType, Color, Product, ProductImage, Order, Cart, Banner, BannerPicture, FooterPicture, YourFavorite, OurFavorite
 from app.utils.email import (
     send_password_reset_code_email,
     send_confirm_email,
@@ -436,6 +437,24 @@ def _product_card_image_urls(product_id: int) -> list:
     return out
 
 
+def _product_card_image_color_ids(product_id: int) -> list:
+    images = (
+        ProductImage.query.filter_by(product_id=product_id)
+        .order_by(ProductImage.sort_order)
+        .all()
+    )
+    seen = set()
+    out = []
+    for img in images:
+        if img.color_id in seen:
+            continue
+        seen.add(img.color_id)
+        url = _presign_key(img.s3_key)
+        if url:
+            out.append(img.color_id)
+    return out
+
+
 def _product_with_images_payload(product: Product) -> dict:
     pd = product.to_dict()
     all_images = (
@@ -472,12 +491,15 @@ def create_product():
         return jsonify({'error': 'Missing fields', 'missing': missing}), 400
 
     try:
+        max_sort_order = db.session.query(db.func.max(Product.sort_order)).scalar()
+        next_sort_order = (int(max_sort_order) + 1) if max_sort_order is not None else 0
         product = Product(
             product_type_id=int(form.get('product_type_id')),
             title=form.get('title'),
             description=form.get('description'),
             price=form.get('price'),
             dimensions=form.get('dimensions'),
+            sort_order=next_sort_order,
         )
         db.session.add(product)
         db.session.flush()  # assigns product.id
@@ -598,34 +620,12 @@ def get_our_favorites():
     return jsonify(out), 200
 
 
-@main.route('/shop-the-collection', methods=['GET'])
-def get_shop_the_collection():
-    rows = (
-        ShopTheCollection.query.join(Product)
-        .filter(Product.is_active == True)
-        .order_by(ShopTheCollection.sort_order.asc())
-        .all()
-    )
-    out = []
-    for row in rows:
-        p = Product.query.options(joinedload(Product.product_type)).get(row.product_id)
-        if not p:
-            continue
-        pd = p.to_dict()
-        pd['product_type_name'] = p.product_type.name if p.product_type else None
-        primary = _primary_product_image_url(p.id)
-        pd['image_url'] = primary
-        pd['image_urls'] = [primary] if primary else []
-        out.append(pd)
-    return jsonify(out), 200
-
-
 @main.route('/products', methods=['GET'])
 def get_products():
     products = (
         Product.query.options(joinedload(Product.product_type))
         .where(Product.is_active == True)
-        .order_by(Product.created_at.desc())
+        .order_by(Product.sort_order.asc())
         .all()
     )
     out = []
@@ -633,9 +633,75 @@ def get_products():
         pd = p.to_dict()
         pd['product_type_name'] = p.product_type.name if p.product_type else None
         pd['image_urls'] = _product_card_image_urls(p.id)
+        pd['image_color_ids'] = _product_card_image_color_ids(p.id)
         pd['image_url'] = pd['image_urls'][0] if pd['image_urls'] else None
         out.append(pd)
     return jsonify(out), 200
+
+
+@main.route('/products/sort', methods=['GET'])
+@jwt_required()
+def get_products_sort():
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    rows = db.session.execute(
+        text("SELECT id, title, sort_order FROM products ORDER BY sort_order ASC, id ASC")
+    ).mappings().all()
+    return jsonify({'products': [dict(r) for r in rows]}), 200
+
+
+@main.route('/products/sort', methods=['PUT'])
+@jwt_required()
+def put_products_sort():
+    if not _is_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    data = request.get_json() or []
+    if not isinstance(data, list):
+        return jsonify({'error': 'Body must be an array'}), 400
+    if not data:
+        return jsonify({'error': 'Body cannot be empty'}), 400
+    updates = []
+    seen_ids = set()
+    seen_orders = set()
+    for i, row in enumerate(data):
+        if not isinstance(row, dict):
+            return jsonify({'error': f'Invalid row at index {i}'}), 400
+        try:
+            pid = int(row.get('product_id'))
+            sort_order = int(row.get('sort_order'))
+        except (TypeError, ValueError):
+            return jsonify({'error': f'Invalid product_id/sort_order at index {i}'}), 400
+        if sort_order < 0:
+            return jsonify({'error': 'sort_order must be >= 0'}), 400
+        if pid in seen_ids:
+            return jsonify({'error': f'Duplicate product_id {pid}'}), 400
+        if sort_order in seen_orders:
+            return jsonify({'error': f'Duplicate sort_order {sort_order}'}), 400
+        seen_ids.add(pid)
+        seen_orders.add(sort_order)
+        updates.append({'product_id': pid, 'sort_order': sort_order})
+    ids_in_db = db.session.execute(text("SELECT id FROM products")).scalars().all()
+    ids_set = set(int(v) for v in ids_in_db)
+    if ids_set != seen_ids:
+        return jsonify({'error': 'Body must include every product exactly once'}), 400
+    expected_orders = set(range(len(ids_set)))
+    if expected_orders != seen_orders:
+        return jsonify({'error': f'sort_order values must be exactly 0..{len(ids_set) - 1}'}), 400
+    try:
+        for row in updates:
+            db.session.execute(
+                text("UPDATE products SET sort_order = :sort_order WHERE id = :product_id"),
+                {'sort_order': row['sort_order'], 'product_id': row['product_id']},
+            )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        logger.exception('Failed to update products sort order')
+        return jsonify({'error': 'Failed to save product order'}), 500
+    rows = db.session.execute(
+        text("SELECT id, title, sort_order FROM products ORDER BY sort_order ASC, id ASC")
+    ).mappings().all()
+    return jsonify({'products': [dict(r) for r in rows]}), 200
 
 
 @main.route('/admin/products/inactive', methods=['GET'])
@@ -1317,57 +1383,6 @@ def admin_put_our_favorites():
         db.session.add(OurFavorite(product_id=int(val), sort_order=i))
     db.session.commit()
     rows = OurFavorite.query.order_by(OurFavorite.sort_order.asc()).all()
-    return jsonify({'favorites': [r.to_dict() for r in rows]}), 200
-
-
-@main.route('/admin/shop-the-collection', methods=['GET'])
-@jwt_required()
-def admin_get_shop_the_collection():
-    if not _is_admin():
-        return jsonify({'error': 'Forbidden'}), 403
-    rows = ShopTheCollection.query.order_by(ShopTheCollection.sort_order.asc()).all()
-    products = (
-        Product.query.filter_by(is_active=True)
-        .order_by(Product.title.asc())
-        .all()
-    )
-    return jsonify({
-        'favorites': [r.to_dict() for r in rows],
-        'products': [{'id': p.id, 'title': p.title} for p in products],
-    }), 200
-
-
-@main.route('/admin/shop-the-collection', methods=['PUT'])
-@jwt_required()
-def admin_put_shop_the_collection():
-    if not _is_admin():
-        return jsonify({'error': 'Forbidden'}), 403
-    data = request.get_json() or {}
-    slots = data.get('slots')
-    if not isinstance(slots, list):
-        return jsonify({'error': 'slots must be an array'}), 400
-    active_products = Product.query.filter_by(is_active=True).all()
-    max_slots = len(active_products)
-    active_ids = {p.id for p in active_products}
-    if len(slots) > max_slots:
-        return jsonify({'error': f'slots may have at most {max_slots} entries'}), 400
-    for i, val in enumerate(slots):
-        if val is None:
-            continue
-        try:
-            pid = int(val)
-        except (TypeError, ValueError):
-            return jsonify({'error': f'Invalid product_id at index {i}'}), 400
-        if pid not in active_ids:
-            return jsonify({'error': f'Product {pid} is not active'}), 400
-
-    ShopTheCollection.query.delete()
-    for i, val in enumerate(slots):
-        if val is None:
-            continue
-        db.session.add(ShopTheCollection(product_id=int(val), sort_order=i))
-    db.session.commit()
-    rows = ShopTheCollection.query.order_by(ShopTheCollection.sort_order.asc()).all()
     return jsonify({'favorites': [r.to_dict() for r in rows]}), 200
 
 
