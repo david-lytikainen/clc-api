@@ -654,7 +654,7 @@ def get_products_sort():
     if not _is_admin():
         return jsonify({'error': 'Forbidden'}), 403
     rows = db.session.execute(
-        text("SELECT id, title, sort_order FROM products ORDER BY sort_order ASC, id ASC")
+        text("SELECT id, title, sort_order FROM products where is_active = true ORDER BY sort_order ASC")
     ).mappings().all()
     return jsonify({'products': [dict(r) for r in rows]}), 200
 
@@ -689,7 +689,7 @@ def put_products_sort():
         seen_ids.add(pid)
         seen_orders.add(sort_order)
         updates.append({'product_id': pid, 'sort_order': sort_order})
-    ids_in_db = db.session.execute(text("SELECT id FROM products")).scalars().all()
+    ids_in_db = db.session.execute(text("SELECT id FROM products where is_active = true")).scalars().all()
     ids_set = set(int(v) for v in ids_in_db)
     if ids_set != seen_ids:
         return jsonify({'error': 'Body must include every product exactly once'}), 400
@@ -708,7 +708,7 @@ def put_products_sort():
         logger.exception('Failed to update products sort order')
         return jsonify({'error': 'Failed to save product order'}), 500
     rows = db.session.execute(
-        text("SELECT id, title, sort_order FROM products ORDER BY sort_order ASC, id ASC")
+        text("SELECT id, title, sort_order FROM products WHERE is_active = true ORDER BY sort_order ASC, id ASC")
     ).mappings().all()
     return jsonify({'products': [dict(r) for r in rows]}), 200
 
