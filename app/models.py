@@ -111,6 +111,7 @@ class ProductImage(db.Model):
     s3_key = db.Column(db.String(512), nullable=False)
     sort_order = db.Column(db.Integer, nullable=False, server_default=db.text('0'))
     color_id = db.Column(db.Integer, db.ForeignKey("colors.id"), nullable=False)
+    is_displayed = db.Column(db.Boolean, nullable=False, server_default=db.text('true'))
 
     product = db.relationship("Product", backref=db.backref("images", lazy=True))
     color = db.relationship("Color", backref=db.backref("product_images", lazy=True))
@@ -122,6 +123,7 @@ class ProductImage(db.Model):
             "s3_key": self.s3_key,
             "sort_order": self.sort_order,
             "color_id": self.color_id,
+            "is_displayed": bool(self.is_displayed),
         }
 
 class Order(db.Model):

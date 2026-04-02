@@ -422,6 +422,7 @@ def _primary_product_image_url(product_id: int):
 def _product_card_image_urls(product_id: int) -> list:
     images = (
         ProductImage.query.filter_by(product_id=product_id)
+        .where(ProductImage.is_displayed == True)
         .order_by(ProductImage.sort_order)
         .all()
     )
@@ -522,12 +523,19 @@ def create_product():
 
         files = [f for f in request.files.getlist('images') if f and f.filename]
         color_id_list = request.form.getlist('image_color_ids')
+        is_displayed_list = request.form.getlist('image_is_displayed')
         if len(files) != len(color_id_list):
             return jsonify({'error': 'Each image requires a color', 'missing': 'image_color_ids'}), 400
+        if is_displayed_list and len(files) != len(is_displayed_list):
+            return jsonify({'error': 'Each image requires display setting', 'missing': 'image_is_displayed'}), 400
         try:
             parsed_color_ids = [int(x) for x in color_id_list]
         except (TypeError, ValueError):
             return jsonify({'error': 'Invalid image_color_ids'}), 400
+        if is_displayed_list:
+            parsed_is_displayed = [str(v).strip().lower() in ('1', 'true', 't', 'yes', 'y', 'on') for v in is_displayed_list]
+        else:
+            parsed_is_displayed = [True for _ in files]
         if files:
             valid_color_ids = {
                 r[0] for r in db.session.query(Color.id).filter(Color.id.in_(parsed_color_ids)).all()
@@ -552,6 +560,7 @@ def create_product():
                 s3_key=key,
                 sort_order=idx,
                 color_id=parsed_color_ids[idx],
+                is_displayed=parsed_is_displayed[idx],
             )
             db.session.add(pi)
         db.session.commit()

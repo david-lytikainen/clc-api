@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS product_images (
     product_id INTEGER NOT NULL,
     s3_key VARCHAR(512) NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    is_displayed BOOLEAN NOT NULL DEFAULT TRUE,
     color_id INTEGER NOT NULL,
 
     CONSTRAINT fk_product_image_product FOREIGN KEY (product_id) REFERENCES products(id),
