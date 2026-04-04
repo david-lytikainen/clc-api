@@ -79,6 +79,7 @@ class Product(db.Model):
     description = db.Column(db.Text, nullable=True)
     price = db.Column(db.Numeric(10, 2), nullable=False)
     dimensions = db.Column(db.Text, nullable=True)
+    lead_time = db.Column(db.Text, nullable=True)
     color = db.Column(db.String(50), nullable=True)
     stripe_price_id = db.Column(db.String(255), nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, server_default=db.text('true'))
@@ -96,6 +97,7 @@ class Product(db.Model):
             "price": float(self.price) if self.price is not None else None,
             "stripe_price_id": self.stripe_price_id,
             "dimensions": self.dimensions,
+            "lead_time": self.lead_time,
             "color": self.color,
             "is_active": bool(self.is_active),
             "sort_order": self.sort_order,

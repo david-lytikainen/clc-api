@@ -88,7 +88,7 @@ def send_welcome_email(user):
     Thread(target=send_async_email, args=(app, msg)).start()
 
 
-def send_receipt_email(customer_email, order_date, order_number, product_names, total):
+def send_receipt_email(customer_email, order_date, order_number, receipt_lines, total):
     app = current_app._get_current_object()
     if app.testing:
         app.logger.info("--- MOCK EMAIL --- To: %s | Receipt order %s --- END MOCK EMAIL ---", customer_email, order_number)
@@ -98,7 +98,7 @@ def send_receipt_email(customer_email, order_date, order_number, product_names, 
         "email/receipt.html",
         order_date=order_date,
         order_number=order_number,
-        product_names=product_names,
+        receipt_lines=receipt_lines,
         total=total,
         link=_order_link(order_number),
         first_name=_first_name_for_email(customer_email),

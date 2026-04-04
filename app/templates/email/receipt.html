@@ -4,7 +4,12 @@
 <div style="margin:16px 0; padding:12px; background:#f9f9f9; border-radius:6px;">
   <div>Order Date: {{ order_date }}</div>
   <div>Order Number: <a href="{{ link }}">{{ order_number }}</a></div>
-  <div>Products: {{ product_names }}</div>
+  <div>Products:</div>
+  <ul style="margin:2px 0 2px 0; padding-left:20px;">
+    {% for line in receipt_lines %}
+    <li>{{ line }}</li>
+    {% endfor %}
+  </ul>
   <div>Total: {{ total }}</div>
 </div>
 <p>Every item is handcrafted and made to order, so please allow 2 weeks for your order to leave our studio. By that time, we will send a follow-up email with tracking information.</p>

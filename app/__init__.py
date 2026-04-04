@@ -4,7 +4,11 @@ from flask_cors import CORS
 import os
 from datetime import timedelta
 from app.extensions import db, jwt
-from app.routes_all import main
+from app.routes.admin_routes import admin_bp
+from app.routes.cart_routes import cart_bp
+from app.routes.home_page_routes import home_page_bp
+from app.routes.product_routes import product_bp
+from app.routes.stripe_routes import stripe_bp
 from app.routes.user_routes import user_bp
 from app.utils.email import mail
 
@@ -45,8 +49,12 @@ def create_app():
     def expired_token_callback(jwt_header, jwt_payload):
         return jsonify({"error": "Token expired", "msg": "Token has expired"}), 401
 
-    app.register_blueprint(main, url_prefix="/api")
     app.register_blueprint(user_bp, url_prefix="/api")
+    app.register_blueprint(home_page_bp, url_prefix="/api")
+    app.register_blueprint(product_bp, url_prefix="/api")
+    app.register_blueprint(admin_bp, url_prefix="/api")
+    app.register_blueprint(stripe_bp, url_prefix="/api")
+    app.register_blueprint(cart_bp, url_prefix="/api")
 
     CORS(
         app,
