@@ -444,10 +444,12 @@ def stripe_webhook():
                             qty = o.quantity or 1
                             color_row = Color.query.get(o.color_id) if getattr(o, "color_id", None) else None
                             color_name = color_row.name if color_row else None
+                            line_cents = int(o.amount_cents or 0)
+                            line_amt = f"${line_cents / 100:.2f}"
                             if color_name:
-                                receipt_lines.append(f"{title} × {qty} in {color_name}")
+                                receipt_lines.append(f"{title} × {qty} in {color_name} — {line_amt}")
                             else:
-                                receipt_lines.append(f"{title} × {qty}")
+                                receipt_lines.append(f"{title} × {qty} — {line_amt}")
                         ship_meta = meta_flat.get("shipping_cents")
                         if ship_meta:
                             try:
