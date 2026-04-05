@@ -32,7 +32,7 @@ def _shipping_stripe_line(shipping_cents: int) -> dict:
     return {
         "price_data": {
             "currency": "usd",
-            "product_data": {"name": "Shipping"},
+            "product_data": {"name": "Shipping and handling"},
             "unit_amount": int(shipping_cents),
         },
         "quantity": 1,
@@ -454,7 +454,7 @@ def stripe_webhook():
                                 sc = int(ship_meta)
                                 if sc > 0:
                                     sz = meta_flat.get("shipping_zip") or ""
-                                    receipt_lines.append(f"Shipping (ZIP {sz}) — ${sc / 100:.2f}")
+                                    receipt_lines.append(f"Shipping and handling (ZIP {sz}) — ${sc / 100:.2f}")
                             except (TypeError, ValueError):
                                 pass
                         at_total = getattr(session_obj, "amount_total", None)
