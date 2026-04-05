@@ -16,10 +16,40 @@ from app.routes.common import (
     stripe_metadata_dict,
 )
 from app.utils.email import send_receipt_email
+from app.utils.shipping import (
+    infer_shipping_tier_from_title,
+    normalize_us_zip,
+    shipping_cents_for_lines,
+    zone_for_zip,
+)
 
 logger = logging.getLogger(__name__)
 
 stripe_bp = Blueprint("stripe", __name__)
+
+
+def _shipping_stripe_line(shipping_cents: int) -> dict:
+    return {
+        "price_data": {
+            "currency": "usd",
+            "product_data": {"name": "Shipping"},
+            "unit_amount": int(shipping_cents),
+        },
+        "quantity": 1,
+    }
+
+
+@stripe_bp.route("/validate-shipping-zip", methods=["POST"])
+def validate_shipping_zip():
+    data = request.get_json() or {}
+    raw = (data.get("zip") or "").strip()
+    normalized = normalize_us_zip(raw)
+    if not normalized:
+        return jsonify({"valid": False}), 200
+    zone = zone_for_zip(normalized)
+    if zone is None:
+        return jsonify({"valid": False}), 200
+    return jsonify({"valid": True, "zone": zone}), 200
 
 
 @stripe_bp.route("/create-cart-checkout-session", methods=["POST"])
@@ -58,6 +88,30 @@ def create_cart_checkout_session():
     if not line_items:
         return jsonify({"error": "No valid line items"}), 400
 
+    zip_norm = normalize_us_zip(data.get("shipping_zip") or data.get("shippingZip"))
+    if not zip_norm:
+        return jsonify({"error": "A valid US shipping ZIP code is required"}), 400
+    zone = zone_for_zip(zip_norm)
+    if zone is None:
+        return jsonify({"error": "Invalid or unsupported shipping ZIP code"}), 400
+
+    tier_lines = []
+    for it in raw_items:
+        try:
+            product_id = int(it.get("product_id"))
+            quantity = int(it.get("quantity", 1))
+        except (TypeError, ValueError):
+            continue
+        if quantity < 1:
+            continue
+        prod = Product.query.get(product_id)
+        if not prod:
+            continue
+        tier = infer_shipping_tier_from_title(prod.title)
+        tier_lines.append((tier, quantity))
+    shipping_cents = shipping_cents_for_lines(tier_lines, zone)
+    line_items.append(_shipping_stripe_line(shipping_cents))
+
     try:
         user_id = None
         try:
@@ -82,6 +136,8 @@ def create_cart_checkout_session():
             "order_number": order_number,
             "user_id": str(user_id) if user_id else "",
             "item_colors": json.dumps(item_colors),
+            "shipping_zip": zip_norm,
+            "shipping_cents": str(shipping_cents),
         }
         if allergic is not None:
             meta["allergic_to_cinnamon"] = "true" if allergic else "false"
@@ -125,7 +181,17 @@ def create_checkout_session(price_id):
     if not product_has_color_image(product_row.id, color_id):
         return jsonify({"error": "Invalid color_id for this product"}), 400
 
-    line_items = [{"price": price_id, "quantity": quantity}]
+    zip_norm = normalize_us_zip(data.get("shipping_zip") or data.get("shippingZip"))
+    if not zip_norm:
+        return jsonify({"error": "A valid US shipping ZIP code is required"}), 400
+    zone = zone_for_zip(zip_norm)
+    if zone is None:
+        return jsonify({"error": "Invalid or unsupported shipping ZIP code"}), 400
+
+    tier = infer_shipping_tier_from_title(product_row.title)
+    shipping_cents = shipping_cents_for_lines([(tier, quantity)], zone)
+
+    line_items = [{"price": price_id, "quantity": quantity}, _shipping_stripe_line(shipping_cents)]
 
     try:
         user_identity = get_jwt_identity()
@@ -153,6 +219,8 @@ def create_checkout_session(price_id):
             "order_number": order_number,
             "user_id": str(user_id) if user_id else "",
             "color_id": str(color_id),
+            "shipping_zip": zip_norm,
+            "shipping_cents": str(shipping_cents),
         }
         if allergic is not None:
             meta["allergic_to_cinnamon"] = "true" if allergic else "false"
@@ -302,6 +370,7 @@ def stripe_webhook():
                 single_color_meta = meta_flat.get("color_id")
 
                 rows_to_process = line_items_list if line_items_list else []
+                product_line_index = 0
                 for idx, item in enumerate(rows_to_process):
                     price_obj = item.get("price") if isinstance(item, dict) else getattr(item, "price", None)
                     if isinstance(price_obj, dict):
@@ -320,15 +389,18 @@ def stripe_webhook():
                     )
 
                     product = Product.query.filter_by(stripe_price_id=stripe_price_id).first() if stripe_price_id else None
-                    product_id = product.id if product else None
+                    if not product:
+                        continue
+
+                    product_id = product.id
 
                     color_id_order = 1
-                    if item_colors_list and idx < len(item_colors_list):
+                    if item_colors_list and product_line_index < len(item_colors_list):
                         try:
-                            color_id_order = int(item_colors_list[idx].get("color_id"))
+                            color_id_order = int(item_colors_list[product_line_index].get("color_id"))
                         except (TypeError, ValueError):
                             color_id_order = 1
-                    elif single_color_meta is not None and len(rows_to_process) == 1:
+                    elif single_color_meta is not None and product_line_index == 0:
                         try:
                             color_id_order = int(single_color_meta)
                         except (TypeError, ValueError):
@@ -358,6 +430,7 @@ def stripe_webhook():
                         allergic_to_cinnamon=allergic_to_cinnamon_order,
                     )
                     db.session.add(order)
+                    product_line_index += 1
                 db.session.commit()
                 logger.info("Created %s order(s) for session %s", len(rows_to_process), session_obj.id)
                 if customer_email:
@@ -366,7 +439,6 @@ def stripe_webhook():
                         first = orders_for_receipt[0]
                         order_date = first.created_at.strftime("%B %d, %Y") if first.created_at else ""
                         receipt_lines = []
-                        total_cents = 0
                         for o in orders_for_receipt:
                             title = o.product.title if o.product else "Item"
                             qty = o.quantity or 1
@@ -376,7 +448,22 @@ def stripe_webhook():
                                 receipt_lines.append(f"{title} × {qty} in {color_name}")
                             else:
                                 receipt_lines.append(f"{title} × {qty}")
-                            total_cents += o.amount_cents or 0
+                        ship_meta = meta_flat.get("shipping_cents")
+                        if ship_meta:
+                            try:
+                                sc = int(ship_meta)
+                                if sc > 0:
+                                    sz = meta_flat.get("shipping_zip") or ""
+                                    receipt_lines.append(f"Shipping (ZIP {sz}) — ${sc / 100:.2f}")
+                            except (TypeError, ValueError):
+                                pass
+                        at_total = getattr(session_obj, "amount_total", None)
+                        if at_total is None and isinstance(session_obj, dict):
+                            at_total = session_obj.get("amount_total")
+                        try:
+                            total_cents = int(at_total or 0)
+                        except (TypeError, ValueError):
+                            total_cents = sum(o.amount_cents or 0 for o in orders_for_receipt)
                         total_formatted = f"${total_cents / 100:.2f}"
                         send_receipt_email(
                             customer_email,
