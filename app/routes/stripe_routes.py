@@ -38,6 +38,16 @@ def _shipping_stripe_line(shipping_cents: int) -> dict:
         "quantity": 1,
     }
 
+def _free_shipping_stripe_line() -> dict:
+    return {
+        "price_data": {
+            "currency": "usd",
+            "product_data": {"name": "Free Shipping"},
+            "unit_amount": 0,
+        },
+        "quantity": 1,
+    }
+
 
 @stripe_bp.route("/validate-shipping-zip", methods=["POST"])
 def validate_shipping_zip():
@@ -88,29 +98,8 @@ def create_cart_checkout_session():
     if not line_items:
         return jsonify({"error": "No valid line items"}), 400
 
-    zip_norm = normalize_us_zip(data.get("shipping_zip") or data.get("shippingZip"))
-    if not zip_norm:
-        return jsonify({"error": "A valid US shipping ZIP code is required"}), 400
-    zone = zone_for_zip(zip_norm)
-    if zone is None:
-        return jsonify({"error": "Invalid or unsupported shipping ZIP code"}), 400
-
-    tier_lines = []
-    for it in raw_items:
-        try:
-            product_id = int(it.get("product_id"))
-            quantity = int(it.get("quantity", 1))
-        except (TypeError, ValueError):
-            continue
-        if quantity < 1:
-            continue
-        prod = Product.query.get(product_id)
-        if not prod:
-            continue
-        tier = infer_shipping_tier_from_title(prod.title)
-        tier_lines.append((tier, quantity))
-    shipping_cents = shipping_cents_for_lines(tier_lines, zone)
-    line_items.append(_shipping_stripe_line(shipping_cents))
+    # Shipping is free: show a $0 line item in Stripe.
+    line_items.append(_free_shipping_stripe_line())
 
     try:
         user_id = None
@@ -136,8 +125,6 @@ def create_cart_checkout_session():
             "order_number": order_number,
             "user_id": str(user_id) if user_id else "",
             "item_colors": json.dumps(item_colors),
-            "shipping_zip": zip_norm,
-            "shipping_cents": str(shipping_cents),
         }
         if allergic is not None:
             meta["allergic_to_cinnamon"] = "true" if allergic else "false"
@@ -181,17 +168,7 @@ def create_checkout_session(price_id):
     if not product_has_color_image(product_row.id, color_id):
         return jsonify({"error": "Invalid color_id for this product"}), 400
 
-    zip_norm = normalize_us_zip(data.get("shipping_zip") or data.get("shippingZip"))
-    if not zip_norm:
-        return jsonify({"error": "A valid US shipping ZIP code is required"}), 400
-    zone = zone_for_zip(zip_norm)
-    if zone is None:
-        return jsonify({"error": "Invalid or unsupported shipping ZIP code"}), 400
-
-    tier = infer_shipping_tier_from_title(product_row.title)
-    shipping_cents = shipping_cents_for_lines([(tier, quantity)], zone)
-
-    line_items = [{"price": price_id, "quantity": quantity}, _shipping_stripe_line(shipping_cents)]
+    line_items = [{"price": price_id, "quantity": quantity}, _free_shipping_stripe_line()]
 
     try:
         user_identity = get_jwt_identity()
@@ -219,8 +196,6 @@ def create_checkout_session(price_id):
             "order_number": order_number,
             "user_id": str(user_id) if user_id else "",
             "color_id": str(color_id),
-            "shipping_zip": zip_norm,
-            "shipping_cents": str(shipping_cents),
         }
         if allergic is not None:
             meta["allergic_to_cinnamon"] = "true" if allergic else "false"
