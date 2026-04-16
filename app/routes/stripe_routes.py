@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 stripe_bp = Blueprint("stripe", __name__)
 
+CHECKOUT_RETURNS_NOTE = (
+    "We accept returns within 7 days of delivery. Because items are crafted in small batches, "
+    "a 20% restocking fee applies to approved returns. View our Return Policy for full details."
+)
+
 
 def _shipping_stripe_line(shipping_cents: int) -> dict:
     return {
@@ -137,6 +142,7 @@ def create_cart_checkout_session():
             metadata=meta,
             shipping_address_collection={"allowed_countries": ["US"]},
             automatic_tax={"enabled": True},
+            custom_text={"submit": {"message": CHECKOUT_RETURNS_NOTE}},
         )
         if customer_email:
             session_kwargs["customer_email"] = customer_email
@@ -208,6 +214,7 @@ def create_checkout_session(price_id):
             metadata=meta,
             shipping_address_collection={"allowed_countries": ["US"]},
             automatic_tax={"enabled": True},
+            custom_text={"submit": {"message": CHECKOUT_RETURNS_NOTE}},
         )
         if customer_email:
             session_kwargs["customer_email"] = customer_email

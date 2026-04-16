@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 
 home_page_bp = Blueprint("home_page", __name__)
 
-BANNER_COLORS = ("primary", "primary_dark", "secondary", "secondary_dark")
-
 
 def _banner_pictures_response():
     pics = (
@@ -191,9 +189,7 @@ def admin_create_banner():
     data = request.get_json() or {}
     is_active = bool(data.get("is_active", True))
     text = (data.get("text") or "").strip()[:500]
-    background_color = (data.get("background_color") or "primary").strip()
-    if background_color not in BANNER_COLORS:
-        background_color = "primary"
+    background_color = (data.get("background_color"))
     for b in Banner.query.all():
         b.is_active = False
     banner = Banner(is_active=is_active, text=text, background_color=background_color)
