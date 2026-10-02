@@ -88,6 +88,21 @@ def send_welcome_email(user):
     Thread(target=send_async_email, args=(app, msg)).start()
 
 
+def send_new_order_email(order_number):
+    app = current_app._get_current_object()
+    if app.testing:
+        app.logger.info("--- MOCK EMAIL --- To: cinnamonleatherco@gmail.com | New order %s --- END MOCK EMAIL ---", order_number)
+        return
+
+    msg = Message(
+        f"New order #{order_number}",
+        sender=("Cinnamon Leather Co", app.config.get("MAIL_USERNAME")),
+        recipients=["cinnamonleatherco@gmail.com"],
+        body=f"A new order has been placed.\n\nView order: {_order_link(order_number)}",
+    )
+    Thread(target=send_async_email, args=(app, msg)).start()
+
+
 def send_receipt_email(customer_email, order_date, order_number, receipt_lines, total):
     app = current_app._get_current_object()
     if app.testing:

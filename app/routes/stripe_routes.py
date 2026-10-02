@@ -15,7 +15,7 @@ from app.routes.common import (
     product_has_color_image,
     stripe_metadata_dict,
 )
-from app.utils.email import send_receipt_email
+from app.utils.email import send_new_order_email, send_receipt_email
 from app.utils.shipping import (
     infer_shipping_tier_from_title,
     normalize_us_zip,
@@ -415,6 +415,8 @@ def stripe_webhook():
                     product_line_index += 1
                 db.session.commit()
                 logger.info("Created %s order(s) for session %s", len(rows_to_process), session_obj.id)
+                if product_line_index:
+                    send_new_order_email(order_number)
                 if customer_email:
                     orders_for_receipt = Order.query.filter_by(session_id=session_obj.id).order_by(Order.id).all()
                     if orders_for_receipt:
