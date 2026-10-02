@@ -95,10 +95,10 @@ def send_new_order_email(order_number):
         return
 
     msg = Message(
-        f"New order #{order_number}",
+        f"New order #{order_number}!",
         sender=("Cinnamon Leather Co", app.config.get("MAIL_USERNAME")),
         recipients=["cinnamonleatherco@gmail.com"],
-        body=f"A new order has been placed.\n\nView order: {_order_link(order_number)}",
+        body=f"A new order has been placed!\n\nView order: {_order_link(order_number)}",
     )
     Thread(target=send_async_email, args=(app, msg)).start()
 

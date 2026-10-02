@@ -54,7 +54,7 @@ def create_account():
         verify_url = f"{frontend_url}/verify-email?token={verify_token}"
         send_confirm_email(user, verify_url)
 
-        token = create_access_token(identity=str(user.id), expires_delta=timedelta(days=1))
+        token = create_access_token(identity=str(user.id))
         return jsonify({"token": token, "user": user.to_dict()}), 201
 
     except Exception as e:
@@ -78,7 +78,7 @@ def sign_in():
     elif not check_password_hash(user.password, data["password"]):
         return jsonify({"error": "Invalid password"}), 401
 
-    token = create_access_token(identity=str(user.id), expires_delta=timedelta(days=1))
+    token = create_access_token(identity=str(user.id))
     return jsonify({"token": token, "user": user.to_dict()}), 200
 
 
@@ -133,7 +133,7 @@ def reset_password():
     user.forgot_password_code = None
     user.forgot_password_code_expires_at = None
     db.session.commit()
-    token = create_access_token(identity=str(user.id), expires_delta=timedelta(days=1))
+    token = create_access_token(identity=str(user.id))
     return jsonify({"token": token, "user": user.to_dict()}), 200
 
 
