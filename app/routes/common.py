@@ -1,12 +1,9 @@
 import logging
 import os
-import pathlib
 import random
-from uuid import uuid4
 
 import boto3
 from flask_jwt_extended import get_jwt_identity
-from app.extensions import db
 from app.models import Color, Order, Product, ProductImage, User
 
 logger = logging.getLogger(__name__)

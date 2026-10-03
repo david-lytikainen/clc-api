@@ -16,12 +16,7 @@ from app.routes.common import (
     stripe_metadata_dict,
 )
 from app.utils.email import send_new_order_email, send_receipt_email
-from app.utils.shipping import (
-    infer_shipping_tier_from_title,
-    normalize_us_zip,
-    shipping_cents_for_lines,
-    zone_for_zip,
-)
+from app.utils.shipping import normalize_us_zip, zone_for_zip
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +27,6 @@ CHECKOUT_RETURNS_NOTE = (
     "a 20% restocking fee applies to approved returns. View our Return Policy for full details."
 )
 
-
-def _shipping_stripe_line(shipping_cents: int) -> dict:
-    return {
-        "price_data": {
-            "currency": "usd",
-            "product_data": {"name": "Shipping and handling"},
-            "unit_amount": int(shipping_cents),
-        },
-        "quantity": 1,
-    }
 
 def _free_shipping_stripe_line() -> dict:
     return {
